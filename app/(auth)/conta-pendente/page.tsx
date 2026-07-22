@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { Clock, PhoneCall, LogOut } from 'lucide-react'
+import { Clock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { LogoutButton } from '@/components/auth/logout-button'
 
@@ -25,8 +25,8 @@ export default function ContaPendentePage() {
       </p>
 
       <div className="w-full rounded-lg bg-amber-50 border border-amber-200 p-4 text-xs text-amber-800 space-y-1">
-        <p className="font-semibold">Prazo médio de análise:</p>
-        <p>Até 24 horas úteis. Você receberá uma notificação por e-mail.</p>
+        <p className="font-semibold">Notificação de Aprovação:</p>
+        <p>Você receberá uma notificação por e-mail assim que a análise for concluída.</p>
       </div>
 
       <div className="pt-4 flex flex-col gap-2 w-full">

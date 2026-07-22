@@ -1,20 +1,26 @@
 import type { Metadata } from 'next'
-import { ForgotPasswordForm } from '@/components/auth/forgot-password-form'
+import { Suspense } from 'react'
+import { RecuperarSenhaContent } from '@/components/auth/recuperar-senha-content'
 
 export const metadata: Metadata = {
   title: 'Recuperar Senha',
 }
 
+/**
+ * Página de recuperação de senha.
+ *
+ * Comportamento:
+ * - Sem parâmetros → exibe ForgotPasswordForm (solicita o e-mail)
+ * - Com ?type=recovery → exibe ResetPasswordForm (define a nova senha)
+ *
+ * O Supabase redireciona para esta página após o usuário clicar no link
+ * de recuperação. O callback /api/auth/callback trata o código e
+ * redireciona aqui com type=recovery.
+ */
 export default function RecuperarSenhaPage() {
   return (
-    <>
-      <div className="mb-6 text-center">
-        <h1 className="text-xl font-bold text-gray-900">Recuperar Senha</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Informe seu e-mail e enviaremos instruções para redefinir sua senha.
-        </p>
-      </div>
-      <ForgotPasswordForm />
-    </>
+    <Suspense fallback={<div className="h-48 animate-pulse rounded-lg bg-gray-100" />}>
+      <RecuperarSenhaContent />
+    </Suspense>
   )
 }

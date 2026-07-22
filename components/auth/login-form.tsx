@@ -3,8 +3,9 @@
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useState, Suspense } from 'react'
+import { Eye, EyeOff } from 'lucide-react'
 import { loginSchema, type LoginInput } from '@/lib/validations/auth'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -15,9 +16,53 @@ import type { Database } from '@/types/database.types'
 type ProfileRow = Database['public']['Tables']['profiles']['Row']
 type CompanyRow = Database['public']['Tables']['companies']['Row']
 
-export function LoginForm() {
+/**
+ * Sanitiza um caminho de redirect no cliente — espelho do safeRedirectPath() do servidor.
+ */
+function safeRedirectPath(
+  path: string | null | undefined,
+  fallback: string = '/',
+): string {
+  if (!path || typeof path !== 'string') return fallback
+  if (path.trim() === '') return fallback
+  if (/^[a-zA-Z][a-zA-Z0-9+\-.]*:/.test(path)) return fallback
+  if (path.startsWith('//')) return fallback
+  if (!path.startsWith('/')) return fallback
+  return path
+}
+
+/**
+ * Verifica se o redirect param é permitido para o role/status do usuário.
+ */
+function isRedirectAllowedForRole(
+  redirectPath: string,
+  role: string,
+  companyStatus: string | null,
+): boolean {
+  if (role === 'admin') return true
+  if (role === 'seller') return !redirectPath.startsWith('/admin')
+  if (role === 'customer') {
+    if (
+      companyStatus === 'pending' ||
+      companyStatus === 'rejected' ||
+      companyStatus === 'suspended'
+    ) {
+      return (
+        redirectPath === '/conta-pendente' || redirectPath === '/conta-recusada'
+      )
+    }
+    return (
+      !redirectPath.startsWith('/admin') && !redirectPath.startsWith('/vendedor')
+    )
+  }
+  return false
+}
+
+function LoginFormInner() {
   const [serverError, setServerError] = useState<string | null>(null)
+  const [showPassword, setShowPassword] = useState(false)
   const router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createClient()
 
   const {
@@ -58,31 +103,58 @@ export function LoginForm() {
 
     router.refresh()
 
-    if (profile?.role === 'admin' || profile?.role === 'seller') {
-      router.push('/admin')
+    if (!profile) {
+      setServerError('Erro de configuração no perfil. Contate o suporte.')
+      await supabase.auth.signOut()
       return
     }
 
-    if (profile?.company_id) {
-      const { data: companyData } = await supabase
-        .from('companies')
-        .select('status')
-        .eq('id', profile.company_id)
-        .single()
+    const role = profile.role
 
-      const company = companyData as Pick<CompanyRow, 'status'> | null
+    // Determinar destino padrão por role
+    let defaultDestination: string
+    let companyStatus: string | null = null
 
-      if (company?.status === 'pending') {
-        router.push('/conta-pendente')
-        return
+    if (role === 'admin') {
+      defaultDestination = '/admin'
+    } else if (role === 'seller') {
+      defaultDestination = '/vendedor'
+    } else {
+      // customer — verificar status da empresa
+      if (profile.company_id) {
+        const { data: companyData } = await supabase
+          .from('companies')
+          .select('status')
+          .eq('id', profile.company_id)
+          .single()
+
+        companyStatus = (companyData as Pick<CompanyRow, 'status'> | null)?.status ?? null
       }
-      if (company?.status === 'rejected' || company?.status === 'suspended') {
-        router.push('/conta-recusada')
-        return
+
+      if (companyStatus === 'approved') {
+        defaultDestination = '/minha-conta'
+      } else if (companyStatus === 'pending') {
+        defaultDestination = '/conta-pendente'
+      } else if (companyStatus === 'rejected' || companyStatus === 'suspended') {
+        defaultDestination = '/conta-recusada'
+      } else {
+        defaultDestination = '/conta-pendente'
       }
     }
 
-    router.push('/minha-conta')
+    // Verificar redirect param — somente se seguro e compatível com o role
+    const redirectParam = searchParams.get('redirect')
+    const safePath = safeRedirectPath(redirectParam)
+
+    if (
+      safePath !== '/' &&
+      isRedirectAllowedForRole(safePath, role, companyStatus)
+    ) {
+      router.push(safePath)
+      return
+    }
+
+    router.push(defaultDestination)
   }
 
   return (
@@ -99,14 +171,29 @@ export function LoginForm() {
       />
 
       <div>
-        <Input
-          label="Senha"
-          type="password"
-          autoComplete="current-password"
-          required
-          {...register('password')}
-          error={errors.password?.message}
-        />
+        <div className="relative">
+          <Input
+            label="Senha"
+            type={showPassword ? 'text' : 'password'}
+            autoComplete="current-password"
+            required
+            {...register('password')}
+            error={errors.password?.message}
+          />
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={() => setShowPassword((v) => !v)}
+            className="absolute right-3 top-8 text-gray-400 hover:text-gray-600 focus:outline-none"
+            aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+          >
+            {showPassword ? (
+              <EyeOff className="h-4 w-4" />
+            ) : (
+              <Eye className="h-4 w-4" />
+            )}
+          </button>
+        </div>
         <div className="mt-1 text-right">
           <Link
             href="/recuperar-senha"
@@ -128,5 +215,13 @@ export function LoginForm() {
         </Link>
       </p>
     </form>
+  )
+}
+
+export function LoginForm() {
+  return (
+    <Suspense fallback={<div className="h-48 animate-pulse rounded-lg bg-gray-100" />}>
+      <LoginFormInner />
+    </Suspense>
   )
 }

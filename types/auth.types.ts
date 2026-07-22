@@ -40,6 +40,11 @@ export interface AuthContext {
    * Indica se pode criar pedidos
    */
   canOrder: boolean
+  /**
+   * Indica que o usuário existe no Auth mas não tem perfil em public.profiles.
+   * A sessão já foi encerrada quando este campo é true.
+   */
+  profileMissing?: boolean
 }
 
 // Guards reutilizáveis no servidor

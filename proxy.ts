@@ -12,9 +12,91 @@ type CompanyRow = Database['public']['Tables']['companies']['Row']
  * 1. Atualizar a sessão Supabase no cookie a cada request
  * 2. Proteger rotas privadas (redirecionar visitantes)
  * 3. Redirecionar usuários autenticados de rotas auth (login/cadastro)
+ *    para o destino correto de acordo com role e status
  * 4. Redirecionar clientes pendentes ou recusados para telas de aviso
  * 5. Bloquear acesso admin para não-admins
+ * 6. Bloquear acesso a /vendedor para não-sellers (exceto admin)
+ * 7. Prevenir open redirect via safeRedirectPath()
+ *
+ * IMPORTANTE: O proxy faz proteção inicial. Os layouts e páginas privadas
+ * realizam validação adicional no servidor. Nunca confiar apenas no proxy.
  */
+
+/**
+ * Sanitiza um caminho de redirect para prevenir open redirect.
+ * Aceita somente caminhos internos iniciados por uma única barra.
+ */
+function safeRedirectPath(
+  path: string | null | undefined,
+  fallback: string = '/',
+): string {
+  if (!path || typeof path !== 'string') return fallback
+  if (path.trim() === '') return fallback
+
+  // Rejeitar qualquer string com protocolo (http:, https:, javascript:, etc.)
+  if (/^[a-zA-Z][a-zA-Z0-9+\-.]*:/.test(path)) return fallback
+
+  // Rejeitar protocol-relative URLs (//)
+  if (path.startsWith('//')) return fallback
+
+  // Deve começar com /
+  if (!path.startsWith('/')) return fallback
+
+  return path
+}
+
+/**
+ * Verifica se um caminho de redirect é permitido para o role/status do usuário.
+ * Previne que um customer use redirect=/admin, etc.
+ */
+function isRedirectAllowedForRole(
+  redirectPath: string,
+  role: string,
+  companyStatus: string | null,
+): boolean {
+  if (role === 'admin') return true
+
+  if (role === 'seller') {
+    return !redirectPath.startsWith('/admin')
+  }
+
+  if (role === 'customer') {
+    if (
+      companyStatus === 'pending' ||
+      companyStatus === 'rejected' ||
+      companyStatus === 'suspended'
+    ) {
+      return (
+        redirectPath === '/conta-pendente' ||
+        redirectPath === '/conta-recusada'
+      )
+    }
+    return (
+      !redirectPath.startsWith('/admin') &&
+      !redirectPath.startsWith('/vendedor')
+    )
+  }
+
+  return false
+}
+
+/**
+ * Retorna o destino padrão do usuário autenticado com base em role e status.
+ */
+function getDefaultDestination(
+  role: string,
+  companyStatus: string | null,
+): string {
+  if (role === 'admin') return '/admin'
+  if (role === 'seller') return '/vendedor'
+  if (role === 'customer') {
+    if (companyStatus === 'approved') return '/minha-conta'
+    if (companyStatus === 'pending') return '/conta-pendente'
+    return '/conta-recusada'
+  }
+  return '/'
+}
+
 export async function proxy(request: NextRequest) {
   const response = NextResponse.next({ request })
   const supabase = createProxyClient(request, response)
@@ -25,7 +107,9 @@ export async function proxy(request: NextRequest) {
 
   const { pathname } = request.nextUrl
 
-  // Rotas isentas de redirecionamento por status
+  // ──────────────────────────────────────────────────────
+  // Rotas de status — exigem autenticação, mas não role específica
+  // ──────────────────────────────────────────────────────
   if (pathname === '/conta-pendente' || pathname === '/conta-recusada') {
     if (!user) {
       return NextResponse.redirect(new URL('/login', request.url))
@@ -33,23 +117,76 @@ export async function proxy(request: NextRequest) {
     return response
   }
 
-  // Proteção de rotas administrativas
+  // ──────────────────────────────────────────────────────
+  // Proteção de rotas administrativas (/admin/*)
+  // ──────────────────────────────────────────────────────
   if (pathname.startsWith('/admin')) {
     if (!user) {
       const redirectUrl = request.nextUrl.clone()
       redirectUrl.pathname = '/login'
-      redirectUrl.searchParams.set('redirect', pathname)
+      const safeNext = safeRedirectPath(pathname)
+      redirectUrl.searchParams.set('redirect', safeNext)
       return NextResponse.redirect(redirectUrl)
     }
+
+    // Verificação leve no proxy — layout faz verificação completa
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+
+    const role = (profileData as Pick<ProfileRow, 'role'> | null)?.role
+
+    if (role !== 'admin') {
+      // Redireciona para o destino correto sem expor o motivo
+      return NextResponse.redirect(new URL('/', request.url))
+    }
+
     return response
   }
 
-  // Proteção de rotas autenticadas da conta e checkout
-  if (pathname.startsWith('/minha-conta') || pathname.startsWith('/carrinho') || pathname.startsWith('/checkout')) {
+  // ──────────────────────────────────────────────────────
+  // Proteção de rotas do vendedor (/vendedor/*)
+  // ──────────────────────────────────────────────────────
+  if (pathname.startsWith('/vendedor')) {
     if (!user) {
       const redirectUrl = request.nextUrl.clone()
       redirectUrl.pathname = '/login'
-      redirectUrl.searchParams.set('redirect', pathname)
+      const safeNext = safeRedirectPath(pathname)
+      redirectUrl.searchParams.set('redirect', safeNext)
+      return NextResponse.redirect(redirectUrl)
+    }
+
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+
+    const role = (profileData as Pick<ProfileRow, 'role'> | null)?.role
+
+    // Apenas seller e admin podem acessar /vendedor
+    if (role !== 'seller' && role !== 'admin') {
+      return NextResponse.redirect(new URL('/', request.url))
+    }
+
+    return response
+  }
+
+  // ──────────────────────────────────────────────────────
+  // Proteção de rotas autenticadas da conta e checkout
+  // ──────────────────────────────────────────────────────
+  if (
+    pathname.startsWith('/minha-conta') ||
+    pathname.startsWith('/carrinho') ||
+    pathname.startsWith('/checkout')
+  ) {
+    if (!user) {
+      const redirectUrl = request.nextUrl.clone()
+      redirectUrl.pathname = '/login'
+      const safeNext = safeRedirectPath(pathname)
+      redirectUrl.searchParams.set('redirect', safeNext)
       return NextResponse.redirect(redirectUrl)
     }
 
@@ -82,14 +219,57 @@ export async function proxy(request: NextRequest) {
     return response
   }
 
-  // Redireciona usuários autenticados longe das telas de auth pública
+  // ──────────────────────────────────────────────────────
+  // Redireciona usuários autenticados fora das telas de auth pública
+  // O redirecionamento respeita role e status — não usa redirect param aqui
+  // para evitar que o proxy seja contornado por parâmetros maliciosos.
+  // ──────────────────────────────────────────────────────
   if (
     user &&
     (pathname === '/login' ||
       pathname === '/cadastro' ||
       pathname === '/recuperar-senha')
   ) {
-    return NextResponse.redirect(new URL('/minha-conta', request.url))
+    // Buscar role e status para destino correto
+    const { data: profileData } = await supabase
+      .from('profiles')
+      .select('role, company_id')
+      .eq('id', user.id)
+      .single()
+
+    const profile = profileData as Pick<ProfileRow, 'role' | 'company_id'> | null
+
+    if (!profile) {
+      // Perfil ausente — não redireciona, deixa o usuário no login
+      return response
+    }
+
+    let companyStatus: string | null = null
+
+    if (profile.role === 'customer' && profile.company_id) {
+      const { data: companyData } = await supabase
+        .from('companies')
+        .select('status')
+        .eq('id', profile.company_id)
+        .single()
+
+      companyStatus = (companyData as Pick<CompanyRow, 'status'> | null)?.status ?? null
+    }
+
+    const destination = getDefaultDestination(profile.role, companyStatus)
+
+    // Verificar se existe um redirect param seguro e compatível com o role
+    const redirectParam = request.nextUrl.searchParams.get('redirect')
+    const safePath = safeRedirectPath(redirectParam)
+
+    if (
+      safePath !== '/' &&
+      isRedirectAllowedForRole(safePath, profile.role, companyStatus)
+    ) {
+      return NextResponse.redirect(new URL(safePath, request.url))
+    }
+
+    return NextResponse.redirect(new URL(destination, request.url))
   }
 
   return response
