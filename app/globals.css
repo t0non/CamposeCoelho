@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+:root {
+  /* Cores Principais - Central Atacado */
+  --primary-navy: #0f2942;
+  --primary-navy-hover: #163a5c;
+  --primary-navy-light: #f0f4f8;
+  
+  --accent-orange: #f97316;
+  --accent-orange-hover: #ea580c;
+  --accent-orange-light: #fff7ed;
+  
+  --bg-app: #f8fafc;
+  --bg-surface: #ffffff;
+  
+  --text-main: #0f172a;
+  --text-muted: #475569;
+  --text-light: #94a3b8;
+  
+  --border-light: #e2e8f0;
+  --border-subtle: #f1f5f9;
+
+  --state-success: #16a34a;
+  --state-success-bg: #f0fdf4;
+  --state-warning: #d97706;
+  --state-warning-bg: #fffbeb;
+  --state-danger: #dc2626;
+  --state-danger-bg: #fef2f2;
+  --state-info: #2563eb;
+  --state-info-bg: #eff6ff;
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+
+  --max-width-site: 80rem; /* 1280px */
+}
+
+@theme inline {
+  --color-navy-900: var(--primary-navy);
+  --color-navy-800: var(--primary-navy-hover);
+  --color-navy-50: var(--primary-navy-light);
+
+  --color-orange-500: var(--accent-orange);
+  --color-orange-600: var(--accent-orange-hover);
+  --color-orange-50: var(--accent-orange-light);
+
+  --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
+}
+
+body {
+  background-color: var(--bg-app);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Prevenir rolagem da página quando Modal ou Drawer está aberto */
+body.overflow-hidden {
+  overflow: hidden;
+}
+
+/* Custom Scrollbar suave para menus e drawers */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
