@@ -108,6 +108,28 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // ──────────────────────────────────────────────────────
+  // Proteção de visibilidade pública para /produto/[slug]
+  // ──────────────────────────────────────────────────────
+  if (pathname.startsWith('/produto/')) {
+    const slug = pathname.replace('/produto/', '').split('/')[0]?.toLowerCase().trim()
+    if (slug) {
+      const { data: prodCheck } = await supabase
+        .from('products')
+        .select('id')
+        .eq('slug', slug)
+        .eq('is_active', true)
+        .eq('is_published', true)
+        .maybeSingle()
+
+      if (!prodCheck) {
+        return NextResponse.rewrite(new URL('/_not-found', request.url), {
+          status: 404,
+        })
+      }
+    }
+  }
+
+  // ──────────────────────────────────────────────────────
   // Rotas de status — exigem autenticação, mas não role específica
   // ──────────────────────────────────────────────────────
   if (pathname === '/conta-pendente' || pathname === '/conta-recusada') {
