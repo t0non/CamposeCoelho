@@ -1,4 +1,6 @@
 import type { Metadata } from 'next'
+
+export const dynamic = 'force-dynamic'
 import { getAuthContext } from '@/lib/supabase/auth'
 import { getHomePageData } from '@/lib/data/home'
 import { HeroCarousel } from '@/components/home/hero-carousel'

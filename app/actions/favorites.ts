@@ -40,7 +40,7 @@ export async function addFavoriteAction(productId: string): Promise<FavoriteActi
   }
 
   // Inserir favorito para a sessão atual (profile_id = user.id)
-  const { error } = await supabase.from('favorites').insert({
+  const { error } = await (supabase.from('favorites') as any).insert({
     profile_id: user.id,
     product_id: productId,
   })

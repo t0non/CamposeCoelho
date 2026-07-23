@@ -28,9 +28,11 @@ export function ProductPricing({ product, quantity }: ProductPricingProps) {
     (t) => quantity >= t.minQuantity && (t.maxQuantity === undefined || quantity <= t.maxQuantity),
   )
 
-  const activeUnitPrice = activeTier ? activeTier.pricePerUnit : effectivePrice
-  const totalSubtotal = activeUnitPrice * quantity
-  const unitsPerMaster = product.detail.packaging?.unitsPerMasterBox ?? 1
+  const activeUnitPrice = activeTier
+    ? (activeTier.pricePerUnit ?? activeTier.unitPrice ?? effectivePrice)
+    : effectivePrice
+  const totalSubtotal = (activeUnitPrice ?? 0) * quantity
+  const unitsPerMaster = 1
   const totalUnitsCount = quantity * unitsPerMaster
 
   return (
@@ -39,7 +41,7 @@ export function ProductPricing({ product, quantity }: ProductPricingProps) {
       <div className="space-y-1">
         <div className="flex items-baseline gap-3">
           <span className="text-3xl font-black text-slate-900">
-            {formatPrice(activeUnitPrice)}
+            {formatPrice(activeUnitPrice ?? 0)}
           </span>
           <span className="text-xs font-semibold text-slate-500">
             por {product.unit} ({unitsPerMaster} un/cx)
@@ -65,7 +67,12 @@ export function ProductPricing({ product, quantity }: ProductPricingProps) {
       {/* Tabela de Descontos por Lote */}
       {volumeDiscounts && (
         <VolumeDiscountTable
-          tiers={volumeDiscounts}
+          tiers={volumeDiscounts.map((t) => ({
+            minQuantity: t.minQuantity,
+            maxQuantity: t.maxQuantity,
+            discountPercentage: t.discountPercent ?? t.discountPercentage ?? 0,
+            pricePerUnit: t.unitPrice ?? t.pricePerUnit ?? 0,
+          }))}
           currentQuantity={quantity}
           unit={product.unit}
         />

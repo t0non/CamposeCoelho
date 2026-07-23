@@ -5,9 +5,11 @@ import { getProductImageUrl } from '@/lib/utils/storage-url'
 import { getEffectivePriceForCurrentCustomer, getCatalogPricingForCurrentCustomer } from '@/lib/data/pricing'
 
 export interface ProductDetailInfo {
+  longDescription?: string
+  instructions?: string[]
   applications?: string[]
-  packaging?: string
-  masterBox?: string
+  packaging?: any
+  masterBox?: any
   dimensions?: string
   weight?: string
   origin?: string
@@ -19,8 +21,11 @@ export interface ProductDetailInfo {
 
 export interface VolumeDiscountTier {
   minQuantity: number
-  discountPercent: number
-  unitPrice: number
+  maxQuantity?: number
+  discountPercent?: number
+  discountPercentage?: number
+  unitPrice?: number
+  pricePerUnit?: number
 }
 
 export interface FullProductData {

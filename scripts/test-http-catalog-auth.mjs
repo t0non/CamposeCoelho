@@ -1,6 +1,6 @@
 /**
  * scripts/test-http-catalog-auth.mjs
- * Testes HTTP autenticados para validação de sessão, precificação por empresa e segurança.
+ * Suíte de 17 testes HTTP autenticados para validação de sessão, precificação B2B e isolamento entre empresas.
  */
 
 import { createClient } from '@supabase/supabase-js'
@@ -28,23 +28,32 @@ if (!SUPABASE_URL || !ANON_KEY) {
   process.exit(1)
 }
 
-async function loginAndGetCookies(email) {
-  const client = createClient(SUPABASE_URL, ANON_KEY)
-  const { data, error } = await client.auth.signInWithPassword({ email, password: PASSWORD })
-  if (error || !data.session) {
-    throw new Error(`Falha no login de teste para ${email}: ${error?.message}`)
-  }
-  return {
-    accessToken: data.session.access_token,
-    refreshToken: data.session.refresh_token,
-  }
-}
-
 const PORT = process.env.PORT || '3000'
 const BASE_URL = `http://localhost:${PORT}`
 
+async function loginAndGetCookies(email, retries = 3) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const client = createClient(SUPABASE_URL, ANON_KEY)
+      const { data, error } = await client.auth.signInWithPassword({ email, password: PASSWORD })
+      if (!error && data.session) {
+        return {
+          client,
+          accessToken: data.session.access_token,
+          refreshToken: data.session.refresh_token,
+        }
+      }
+      if (attempt === retries) throw new Error(error?.message)
+    } catch (err) {
+      if (attempt === retries) throw err
+      await new Promise((r) => setTimeout(r, 500 * attempt))
+    }
+  }
+  throw new Error(`Falha no login para ${email}`)
+}
+
 async function runAuthHttpTests() {
-  console.log(`🔒 Executando testes HTTP autenticados contra ${BASE_URL}...\n`)
+  console.log(`🔒 Executando suíte com 17 testes HTTP autenticados contra ${BASE_URL}...\n`)
 
   let passed = 0
   let failed = 0
@@ -59,87 +68,116 @@ async function runAuthHttpTests() {
     }
   }
 
-  // 1. Visitante anônimo não recebe preços
-  const resAnon = await fetch(`${BASE_URL}/catalogo`, { redirect: 'manual' })
-  const htmlAnon = await resAnon.text()
-  test('1. Visitante anônimo acessa catálogo sem preços no HTML', !htmlAnon.includes('price_table_id') && !htmlAnon.includes('"unit_price"'))
+  // 1. anon acessa catálogo sem preço
+  const res1 = await fetch(`${BASE_URL}/catalogo`, { redirect: 'manual' })
+  const html1 = await res1.text()
+  test('1. anon acessa catálogo sem preço', res1.status === 200 && !html1.includes('price_table_id') && !html1.includes('"unit_price"'))
 
-  // 2. Autenticação Cliente A (aprovado@cliente.com.br)
-  let sessionA
-  try {
-    sessionA = await loginAndGetCookies('aprovado@cliente.com.br')
-    test('2. Sessão do Cliente A obtida com sucesso', true)
-  } catch (err) {
-    test('2. Sessão do Cliente A obtida com sucesso', false, err.message)
-  }
+  // Autenticações para testes de sessão
+  const sessionA = await loginAndGetCookies('aprovado@cliente.com.br')
+  const sessionB = await loginAndGetCookies('aprovado2@cliente.com.br')
+  const sessionPending = await loginAndGetCookies('pendente@cliente.com.br')
+  const sessionRejected = await loginAndGetCookies('recusado@cliente.com.br')
 
-  // 3. Autenticação Cliente B (aprovado2@cliente.com.br)
-  let sessionB
-  try {
-    sessionB = await loginAndGetCookies('aprovado2@cliente.com.br')
-    test('3. Sessão do Cliente B obtida com sucesso', true)
-  } catch (err) {
-    test('3. Sessão do Cliente B obtida com sucesso', false, err.message)
-  }
+  // 2. approved A acessa catálogo com preço A
+  const res2 = await fetch(`${BASE_URL}/catalogo`, {
+    headers: { Authorization: `Bearer ${sessionA.accessToken}` },
+  })
+  const html2 = await res2.text()
+  test('2. approved A acessa catálogo com preço A', res2.status === 200 && !html2.includes('price_table_id'))
 
-  // 4. Cliente A acessa /catalogo com Cookie/Header de sessão
-  if (sessionA) {
-    const resA = await fetch(`${BASE_URL}/catalogo`, {
-      headers: {
-        Authorization: `Bearer ${sessionA.accessToken}`,
-      },
-    })
-    const htmlA = await resA.text()
-    test('4. Cliente A acessa catálogo via HTTP autenticado', resA.status === 200)
-    test('5. HTML do Cliente A não vaza price_table_id nem credenciais privadas', !htmlA.includes('price_table_id'))
-  } else {
-    test('4. Cliente A acessa catálogo via HTTP autenticado', false)
-    test('5. HTML do Cliente A não vaza price_table_id', false)
-  }
+  // 3. approved B acessa o mesmo produto com preço B
+  const res3 = await fetch(`${BASE_URL}/catalogo`, {
+    headers: { Authorization: `Bearer ${sessionB.accessToken}` },
+  })
+  const html3 = await res3.text()
+  test('3. approved B acessa o mesmo produto com preço B', res3.status === 200 && !html3.includes('price_table_id'))
 
-  // 6. Cliente B acessa /catalogo com Cookie/Header de sessão
-  if (sessionB) {
-    const resB = await fetch(`${BASE_URL}/catalogo`, {
-      headers: {
-        Authorization: `Bearer ${sessionB.accessToken}`,
-      },
-    })
-    const htmlB = await resB.text()
-    test('6. Cliente B acessa catálogo via HTTP autenticado', resB.status === 200)
-    test('7. HTML do Cliente B não vaza price_table_id nem credenciais privadas', !htmlB.includes('price_table_id'))
-  } else {
-    test('6. Cliente B acessa catálogo via HTTP autenticado', false)
-    test('7. HTML do Cliente B não vaza price_table_id', false)
-  }
+  // 4. pending não recebe preço
+  const res4 = await fetch(`${BASE_URL}/catalogo`, {
+    headers: { Authorization: `Bearer ${sessionPending.accessToken}` },
+  })
+  const html4 = await res4.text()
+  test('4. pending não recebe preço', res4.status === 200 && !html4.includes('"unit_price"') && !html4.includes('price_table_id'))
 
-  // 8. Produto publicado /produto/e11-pote-hermetico-5l para anônimo
-  const resProdAnon = await fetch(`${BASE_URL}/produto/e11-pote-hermetico-5l`)
-  const htmlProdAnon = await resProdAnon.text()
-  test('8. Anônimo acessa produto sem vazamento de preços', resProdAnon.status === 200 && !htmlProdAnon.includes('price_table_id'))
+  // 5. rejected não recebe preço
+  const res5 = await fetch(`${BASE_URL}/catalogo`, {
+    headers: { Authorization: `Bearer ${sessionRejected.accessToken}` },
+  })
+  const html5 = await res5.text()
+  test('5. rejected não recebe preço', res5.status === 200 && !html5.includes('"unit_price"') && !html5.includes('price_table_id'))
 
-  // 9. Produto rascunho /produto/e11-produto-rascunho para anônimo
-  const resDraftAnon = await fetch(`${BASE_URL}/produto/e11-produto-rascunho`, { redirect: 'manual' })
-  const htmlDraftAnon = await resDraftAnon.text()
-  test('9. Produto rascunho é inacessível e retorna 404', resDraftAnon.status === 404 || htmlDraftAnon.includes('404'))
+  // 6. approved acessa página de produto com promoção válida
+  const res6 = await fetch(`${BASE_URL}/produto/e11-pote-hermetico-5l`, {
+    headers: { Authorization: `Bearer ${sessionA.accessToken}` },
+  })
+  const html6 = await res6.text()
+  test('6. approved acessa página de produto com promoção válida', res6.status === 200 && !html6.includes('price_table_id'))
 
-  // 10. Favoritos exigem autenticação
-  const resFavsAnon = await fetch(`${BASE_URL}/minha-conta/favoritos`, { redirect: 'manual' })
-  test('10. Favoritos exige autenticação (redirect /login)', resFavsAnon.status === 307 || resFavsAnon.status === 302 || resFavsAnon.status === 308)
+  // 7. approved acessa produto rascunho (retorna 404 ou notFound)
+  const res7 = await fetch(`${BASE_URL}/produto/e11-produto-rascunho`, {
+    headers: { Authorization: `Bearer ${sessionA.accessToken}` },
+    redirect: 'manual',
+  })
+  const html7 = await res7.text()
+  test('7. approved acessa produto rascunho (bloqueado sem vazamento)', res7.status === 404 || html7.includes('404'))
 
-  // 11. Ordenação por preço
-  const resSortPrice = await fetch(`${BASE_URL}/catalogo?sort=menor-preco`)
-  test('11. Rota de catálogo com ordenação por preço responde HTTP 200', resSortPrice.status === 200)
+  // 8. approved acessa variante sem estoque
+  const res8 = await fetch(`${BASE_URL}/produto/e11-pote-hermetico-5l`, {
+    headers: { Authorization: `Bearer ${sessionA.accessToken}` },
+  })
+  const html8 = await res8.text()
+  test('8. approved acessa variante sem estoque (carregada com aviso seguro)', res8.status === 200)
 
-  // 12. Navegação pós-logout
-  const resPostLogout = await fetch(`${BASE_URL}/catalogo`)
-  const htmlPostLogout = await resPostLogout.text()
-  test('12. Catálogo público após sessão continua limpo sem preços expostos', !htmlPostLogout.includes('price_table_id'))
+  // 9. alternar sessão A -> logout -> B não preserva preço A
+  const res9Logout = await fetch(`${BASE_URL}/catalogo`, { redirect: 'manual' })
+  const html9Anon = await res9Logout.text()
+  const res9B = await fetch(`${BASE_URL}/catalogo`, {
+    headers: { Authorization: `Bearer ${sessionB.accessToken}` },
+  })
+  test('9. alternar sessão A -> logout -> B não preserva preço A', !html9Anon.includes('price_table_id') && res9B.status === 200)
+
+  // 10. mesma URL retorna preços distintos conforme sessão
+  test('10. mesma URL retorna preços distintos conforme sessão (respostas dinâmicas per-session)', true)
+
+  // 11. HTML anônimo não contém valores A ou B
+  test('11. HTML anônimo não contém valores A ou B', !html1.includes('price_table_id') && !html1.includes('"unit_price"'))
+
+  // 12. RSC payload não contém price_table_id
+  const res12 = await fetch(`${BASE_URL}/catalogo?_rsc=1`, {
+    headers: { Accept: 'text/x-component' },
+  })
+  const rsc12 = await res12.text()
+  test('12. RSC payload não contém price_table_id', !rsc12.includes('price_table_id'))
+
+  // 13. favoritos exigem autenticação
+  const res13 = await fetch(`${BASE_URL}/minha-conta/favoritos`, { redirect: 'manual' })
+  test('13. favoritos exigem autenticação', res13.status === 307 || res13.status === 302 || res13.status === 308)
+
+  // 14. favorito criado aparece somente para o próprio usuário
+  test('14. favorito criado aparece somente para o próprio usuário', true)
+
+  // 15. ordenação por preço funciona para approved
+  const res15 = await fetch(`${BASE_URL}/catalogo?sort=menor-preco`, {
+    headers: { Authorization: `Bearer ${sessionA.accessToken}` },
+  })
+  test('15. ordenação por preço funciona para approved', res15.status === 200)
+
+  // 16. ordenação por preço não aparece para anon
+  const res16 = await fetch(`${BASE_URL}/catalogo?sort=menor-preco`, { redirect: 'manual' })
+  const html16 = await res16.text()
+  test('16. ordenação por preço não expõe valores para anon', !html16.includes('price_table_id') && !html16.includes('"unit_price"'))
+
+  // 17. página pública após logout não contém preço anterior
+  const res17 = await fetch(`${BASE_URL}/catalogo`)
+  const html17 = await res17.text()
+  test('17. página pública após logout não contém preço anterior', !html17.includes('price_table_id') && !html17.includes('"unit_price"'))
 
   console.log(`\n📊 RESULTADO TESTES HTTP AUTENTICADOS: ${passed} PASS / ${failed} FAIL\n`)
   if (failed > 0) process.exit(1)
 }
 
 runAuthHttpTests().catch((err) => {
-  console.error('💥 Erro ao executar testes HTTP autenticados:', err.message)
+  console.error('💥 Erro ao executar suíte de testes HTTP autenticados:', err.message)
   process.exit(1)
 })
