@@ -33,7 +33,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const product = await getProductBySlug(slug, authContext)
 
   if (!product) {
-    return { title: 'Produto Não Encontrado | Central Atacado' }
+    notFound()
   }
 
   return {

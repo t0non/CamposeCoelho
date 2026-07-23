@@ -30,7 +30,7 @@ export function ProductPricing({ product, quantity }: ProductPricingProps) {
 
   const activeUnitPrice = activeTier ? activeTier.pricePerUnit : effectivePrice
   const totalSubtotal = activeUnitPrice * quantity
-  const unitsPerMaster = product.detail.packaging.unitsPerMasterBox || 1
+  const unitsPerMaster = product.detail.packaging?.unitsPerMasterBox ?? 1
   const totalUnitsCount = quantity * unitsPerMaster
 
   return (

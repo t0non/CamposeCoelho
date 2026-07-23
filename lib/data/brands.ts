@@ -1,60 +1,64 @@
-import { mockBrands, type BrandItem } from '@/lib/mocks/mock-brands'
+import { createClient } from '@/lib/supabase/server'
 
-export interface BrandDetailData extends BrandItem {
+export interface BrandDetailData {
+  id: string
+  name: string
+  slug: string
+  initials: string
+  category?: string
   description: string
   itemCount: number
   metaTitle: string
   metaDescription: string
 }
 
-const mockBrandDetails: Record<string, BrandDetailData> = {
-  'marca-premium': {
-    id: 'b-1',
-    name: 'Marca Premium B2B',
-    slug: 'marca-premium',
-    initials: 'MP',
-    category: 'Utilidades Domésticas',
-    description: 'Linha completa de utilidades domésticas e conjuntos de cozinha em aço inox de alta durabilidade.',
-    itemCount: 85,
-    metaTitle: 'Produtos Marca Premium no Atacado | Central Atacado',
-    metaDescription: 'Compre produtos da Marca Premium no atacado com faturamento exclusivo para lojistas CNPJ.',
-  },
-  'nutrimax': {
-    id: 'b-2',
-    name: 'NutriMax Atacado',
-    slug: 'nutrimax',
-    initials: 'NM',
-    category: 'Alimentos & Bebidas',
-    description: 'Cafés especiais, grãos selecionados e fardos promocionais para supermercados e mercearias.',
-    itemCount: 42,
-    metaTitle: 'NutriMax Atacado B2B | Central Atacado',
-    metaDescription: 'Fardos de café e produtos alimentos NutriMax no atacado.',
-  },
-  'ferramentas-pro': {
-    id: 'b-3',
-    name: 'Ferramentas Pro',
-    slug: 'ferramentas-pro',
-    initials: 'FP',
-    category: 'Ferramentas',
-    description: 'Equipamentos elétricos, alicates isolados e maletas de aço cromo para uso profissional.',
-    itemCount: 110,
-    metaTitle: 'Ferramentas Pro no Atacado | Central Atacado B2B',
-    metaDescription: 'Linha profissional de ferramentas elétricas e manuais Ferramentas Pro no atacado.',
-  },
-  'papelmax': {
-    id: 'b-4',
-    name: 'PapelMax B2B',
-    slug: 'papelmax',
-    initials: 'PX',
-    category: 'Papelaria',
-    description: 'Caixas de papel sulfite A4 75g e suprimentos corporativos de alta demanda.',
-    itemCount: 65,
-    metaTitle: 'PapelMax no Atacado | Central Atacado',
-    metaDescription: 'Papel sulfite A4 e artigos de papelaria PapelMax no atacado.',
-  },
-}
-
+/**
+ * Consulta real por slug de Marca no Supabase.
+ */
 export async function getBrandBySlug(slug: string): Promise<BrandDetailData | null> {
-  const normalized = slug.toLowerCase()
-  return mockBrandDetails[normalized] ?? null
+  if (!slug) return null
+  const sanitizedSlug = slug.toLowerCase().trim()
+  const supabase = await createClient()
+
+  const { data, error } = await supabase
+    .from('brands')
+    .select('id, name, slug, description, seo_title, seo_description, is_active')
+    .eq('slug', sanitizedSlug)
+    .eq('is_active', true)
+    .maybeSingle()
+
+  if (error || !data) {
+    return null
+  }
+
+  const brand = data as unknown as {
+    id: string
+    name: string
+    slug: string
+    description: string | null
+    seo_title: string | null
+    seo_description: string | null
+    is_active: boolean
+  }
+
+  const { count } = await supabase
+    .from('products')
+    .select('id', { count: 'exact', head: true })
+    .eq('brand_id', brand.id)
+    .eq('is_active', true)
+    .eq('is_published', true)
+
+  const metaTitle = brand.seo_title || `${brand.name} no Atacado B2B | Central Atacado`
+  const metaDescription = brand.seo_description || `Compre produtos da marca ${brand.name} no atacado com faturamento exclusivo.`
+
+  return {
+    id: brand.id,
+    name: brand.name,
+    slug: brand.slug,
+    initials: brand.name.slice(0, 2).toUpperCase(),
+    description: brand.description ?? `Linha de produtos ${brand.name} no atacado.`,
+    itemCount: count ?? 0,
+    metaTitle,
+    metaDescription,
+  }
 }

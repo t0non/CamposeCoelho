@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react'
 import { History } from 'lucide-react'
 import { ProductCard } from './product-card'
-import { mockProductsList } from '@/lib/mocks/mock-products'
 import type { CatalogProduct } from '@/types/product.types'
 
 interface RecentlyViewedProductsProps {
@@ -17,7 +16,7 @@ export function RecentlyViewedProducts({
   canViewPrices,
   userStatus,
 }: RecentlyViewedProductsProps) {
-  const [recentProducts, setRecentProducts] = useState<CatalogProduct[]>([])
+  const [recentProducts] = useState<CatalogProduct[]>([])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -26,17 +25,8 @@ export function RecentlyViewedProducts({
       const stored = localStorage.getItem('b2b_recently_viewed_slugs')
       let slugs: string[] = stored ? JSON.parse(stored) : []
 
-      // Adicionar produto atual aos recentes (removendo duplicados e mantendo até 6)
       slugs = [currentProductSlug, ...slugs.filter((s) => s !== currentProductSlug)].slice(0, 6)
       localStorage.setItem('b2b_recently_viewed_slugs', JSON.stringify(slugs))
-
-      // Filtrar produtos vistos recentemente (excluindo o atual da exibição)
-      const otherSlugs = slugs.filter((s) => s !== currentProductSlug)
-      const matched = mockProductsList
-        .filter((p) => otherSlugs.includes(p.slug))
-        .map(({ ...pub }) => pub)
-
-      setRecentProducts(matched)
     } catch {
       // Ignorar falhas de localStorage silenciosamente
     }

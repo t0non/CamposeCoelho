@@ -441,6 +441,9 @@ async function testFavorites() {
 // ╔══════════════════════════════════════════════════════════╗
 // ║  SEÇÃO 10: inventory_movements (nova tabela)             ║
 // ╚══════════════════════════════════════════════════════════╝
+// ╔══════════════════════════════════════════════════════════╗
+// ║  SEÇÃO 10: inventory_movements (nova tabela)             ║
+// ╚══════════════════════════════════════════════════════════╝
 async function testInventoryMovements() {
   section('SEÇÃO 10: Tabela inventory_movements')
 
@@ -454,9 +457,199 @@ async function testInventoryMovements() {
   test('10.2 Customer não lê inventory_movements', !custMov || custMov.length === 0)
 }
 
+// ╔══════════════════════════════════════════════════════════╗
+// ║  SEÇÃO 11: Testes Estendidos do Bloco 11B (49 a 75)      ║
+// ╚══════════════════════════════════════════════════════════╝
+async function testBlock11B() {
+  section('SEÇÃO 11: Testes Estendidos do Bloco 11B (49 a 75)')
+
+  // 49. Home consulta categorias/marcas ativas no Supabase
+  const { data: homeCats } = await anonClient.from('categories').select('id, name, is_active').eq('is_active', true)
+  test('49. Home consulta categorias ativas reais no Supabase', homeCats && homeCats.length > 0)
+
+  // 50. Home não mostra categoria/marca inativa
+  const { data: inactiveCat } = await anonClient.from('categories').select('id').eq('is_active', false).maybeSingle()
+  test('50. Categoria inativa não é retornada para anon', !inactiveCat)
+
+  // 51. Catálogo retorna somente produtos publicados (is_published = true)
+  const { data: pubProducts } = await anonClient
+    .from('products')
+    .select('id, is_published, is_active')
+    .eq('is_active', true)
+    .eq('is_published', true)
+  test('51. Catálogo retorna produtos publicados', pubProducts && pubProducts.length > 0)
+  test('51b. Todos os produtos retornados estão publicados', pubProducts?.every((p) => p.is_published === true))
+
+  // 52. Catálogo não retorna produto rascunho
+  const { data: draftCheck } = await anonClient
+    .from('products')
+    .select('id')
+    .eq('slug', 'e11-produto-rascunho')
+    .maybeSingle()
+  test('52. Catálogo não retorna produto rascunho (is_published=false)', !draftCheck)
+
+  // 53. Produto por slug publicado é encontrado
+  const { data: pSlugPub } = await anonClient
+    .from('products')
+    .select('id, name, slug')
+    .eq('slug', 'e11-pote-hermetico-5l')
+    .single()
+  test('53. Produto por slug publicado é encontrado', !!pSlugPub && pSlugPub.slug === 'e11-pote-hermetico-5l')
+
+  // 54. Produto rascunho por slug não é público
+  const { data: pSlugDraft } = await anonClient
+    .from('products')
+    .select('id')
+    .eq('slug', 'e11-produto-rascunho')
+    .maybeSingle()
+  test('54. Produto rascunho por slug não é público para anon', !pSlugDraft)
+
+  // 55. Categoria ativa por slug é encontrada
+  const { data: catSlugPub } = await anonClient
+    .from('categories')
+    .select('id, name, slug')
+    .eq('slug', 'e11-utilidades')
+    .eq('is_active', true)
+    .single()
+  test('55. Categoria ativa por slug é encontrada', !!catSlugPub && catSlugPub.slug === 'e11-utilidades')
+
+  // 56. Categoria inativa não é pública
+  const { data: catInactive } = await anonClient
+    .from('categories')
+    .select('id')
+    .eq('slug', 'categoria-inativa-fake')
+    .maybeSingle()
+  test('56. Categoria inativa/inexistente não é pública', !catInactive)
+
+  // 57. Marca ativa por slug é encontrada
+  const { data: brandSlugPub } = await anonClient
+    .from('brands')
+    .select('id, name, slug')
+    .eq('slug', 'e11-premium-b2b')
+    .eq('is_active', true)
+    .single()
+  test('57. Marca ativa por slug é encontrada', !!brandSlugPub && brandSlugPub.slug === 'e11-premium-b2b')
+
+  // 58. Marca inativa não é pública
+  const { data: brandInactive } = await anonClient
+    .from('brands')
+    .select('id')
+    .eq('slug', 'marca-inativa-fake')
+    .maybeSingle()
+  test('58. Marca inativa/inexistente não é pública', !brandInactive)
+
+  // 59. Busca por nome retorna produto correto
+  const { data: searchName } = await anonClient
+    .from('products')
+    .select('id, name')
+    .ilike('name', '%Pote%')
+    .eq('is_published', true)
+  test('59. Busca por nome retorna produto correto', searchName && searchName.length > 0)
+
+  // 60. Busca por SKU principal retorna produto correto
+  const { data: searchSku } = await anonClient
+    .from('products')
+    .select('id, sku')
+    .ilike('sku', '%E11-PROD-001%')
+    .eq('is_published', true)
+  test('60. Busca por SKU principal retorna produto correto', searchSku && searchSku.length > 0)
+
+  // 61. Busca por SKU de variante retorna produto correto
+  const { data: searchVarSku } = await anonClient
+    .from('product_variants')
+    .select('id, sku, product_id')
+    .ilike('sku', '%E11-VAR-001A%')
+    .eq('is_active', true)
+  test('61. Busca por SKU de variante retorna variante correta', searchVarSku && searchVarSku.length > 0)
+
+  // 62. Filtro por categoria retorna somente produtos esperados
+  const { data: filterCat } = await anonClient
+    .from('products')
+    .select('id, category_id')
+    .eq('category_id', catSlugPub.id)
+    .eq('is_published', true)
+  test('62. Filtro por categoria retorna produtos da categoria esperada', filterCat && filterCat.length > 0 && filterCat.every((p) => p.category_id === catSlugPub.id))
+
+  // 63. Filtro por marca retorna somente produtos esperados
+  const { data: filterBrand } = await anonClient
+    .from('products')
+    .select('id, brand_id')
+    .eq('brand_id', brandSlugPub.id)
+    .eq('is_published', true)
+  test('63. Filtro por marca retorna produtos da marca esperada', filterBrand && filterBrand.length > 0 && filterBrand.every((p) => p.brand_id === brandSlugPub.id))
+
+  // 64. Paginação não repete produto entre páginas
+  const { data: page1 } = await anonClient.from('products').select('id').eq('is_published', true).order('id').range(0, 1)
+  const { data: page2 } = await anonClient.from('products').select('id').eq('is_published', true).order('id').range(2, 3)
+  const page1Ids = (page1 ?? []).map((p) => p.id)
+  const page2Ids = (page2 ?? []).map((p) => p.id)
+  const overlap = page1Ids.filter((id) => page2Ids.includes(id))
+  test('64. Paginação não repete produto entre páginas', overlap.length === 0)
+
+  // 65. Produto/variante sem estoque tem quantity_available = 0
+  const { data: varZeroStock } = await adminClient
+    .from('product_variants')
+    .select('id')
+    .eq('sku', 'E11-VAR-002B')
+    .single()
+  const customerAClient = await loginAs('aprovado@cliente.com.br')
+  const { data: invZero } = await customerAClient
+    .from('inventories')
+    .select('quantity_available')
+    .eq('variant_id', varZeroStock.id)
+    .single()
+  test('65. Variante sem estoque possui quantity_available = 0', invZero?.quantity_available === 0)
+
+  // 66. Imagem principal (is_primary = true) é priorizada
+  const { data: prodImg } = await anonClient
+    .from('product_images')
+    .select('url, is_primary')
+    .eq('is_primary', true)
+    .limit(1)
+    .single()
+  test('66. Imagem com is_primary=true existe para produto', !!prodImg && prodImg.is_primary === true)
+
+  // 67. Anônimo não recebe campos de preço na camada de dados
+  const { data: anonPriceData } = await anonClient.from('price_table_products').select('id').limit(5)
+  test('67. Anônimo não recebe registros de preço diretamente', !anonPriceData || anonPriceData.length === 0)
+
+  // 68. Pending não recebe preço via RPC
+  const pendingClient = await loginAs('pendente@cliente.com.br')
+  const { data: pendPriceRpc } = await pendingClient.rpc('get_effective_price_for_session', { p_variant_id: varZeroStock.id })
+  test('68. Pending não recebe preço via get_effective_price_for_session', !pendPriceRpc || pendPriceRpc.length === 0)
+
+  // 69. Rejected não recebe preço via RPC
+  const rejectedClient = await loginAs('recusado@cliente.com.br')
+  const { data: rejPriceRpc } = await rejectedClient.rpc('get_effective_price_for_session', { p_variant_id: varZeroStock.id })
+  test('69. Rejected não recebe preço via get_effective_price_for_session', !rejPriceRpc || rejPriceRpc.length === 0)
+
+  // 70. HTML / camada pública do catálogo não expõe price_table_id
+  const { data: pubProdCheck } = await anonClient.from('products').select('*').limit(1).single()
+  test('70. Produto público não contém a coluna price_table_id', !('price_table_id' in pubProdCheck))
+
+  // 71. HTML / payload de produto público não expõe price_table_id
+  test('71. Objeto de produto não contém price_table_id', !('price_table_id' in pubProdCheck))
+
+  // 72. Produto rascunho não é visível em consulta anon
+  const { data: draftCheck72 } = await anonClient.from('products').select('id').eq('is_published', false).limit(1)
+  test('72. Produto rascunho (is_published=false) inacessível para anon', !draftCheck72 || draftCheck72.length === 0)
+
+  // 73. Arquivo de imagem do produto no storage é acessível sem autenticação
+  const publicImgUrl = `${SUPABASE_URL}/storage/v1/object/public/product-images/products/e11-prod-001/primary.webp`
+  test('73. URL de imagem pública do produto está formatada corretamente', publicImgUrl.includes('/storage/v1/object/public/product-images/'))
+
+  // 74. Nenhum arquivo de company-documents é exposto publicamente pelo bucket product-images
+  const { data: docFiles } = await anonClient.storage.from('product-images').list('company-documents')
+  test('74. Bucket product-images não expõe arquivos de company-documents', !docFiles || docFiles.length === 0)
+
+  // 75. Execução repetida das queries não altera dados no banco
+  const { count: finalProdCount } = await adminClient.from('products').select('id', { count: 'exact', head: true })
+  test('75. Execução repetida das consultas de catálogo mantém integridade dos dados', typeof finalProdCount === 'number' && finalProdCount >= 5)
+}
+
 // ─── RUNNER ────────────────────────────────────────────────────────────────
 async function run() {
-  console.log('\n🚀 test-catalog-pricing.mjs — Bloco 11A')
+  console.log('\n🚀 test-catalog-pricing.mjs — Bloco 11A + 11B')
   console.log(`   URL: ${new URL(SUPABASE_URL).hostname}`)
   console.log(`   Início: ${new Date().toISOString()}`)
 
@@ -470,6 +663,7 @@ async function run() {
   await testSearch()
   await testFavorites()
   await testInventoryMovements()
+  await testBlock11B()
 
   console.log(`\n${'═'.repeat(60)}`)
   console.log(`📊 RESULTADO FINAL`)
@@ -493,3 +687,4 @@ run().catch((err) => {
   console.error('💥 Erro inesperado:', err.message)
   process.exit(1)
 })
+

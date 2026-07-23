@@ -1,8 +1,8 @@
+import { createClient } from '@/lib/supabase/server'
 import type { AuthContext } from '@/types/auth.types'
-import type { CatalogProduct } from '@/types/product.types'
-import { mockProductsList, type PublicCatalogProduct } from '@/lib/mocks/mock-products'
-import { mockProtectedPrices } from '@/lib/mocks/mock-protected-prices'
+import type { CatalogProduct, PriceInfo } from '@/types/product.types'
 import type { CatalogParams } from '@/lib/utils/catalog-params'
+import { getProductImageUrl } from '@/lib/utils/storage-url'
 
 export interface CatalogResult {
   products: CatalogProduct[]
@@ -24,7 +24,7 @@ export interface CatalogFilterOptions {
 }
 
 /**
- * Filtra, ordena e pagina os produtos do catálogo com estrita proteção de preços.
+ * Consulta real ao Supabase para o Catálogo Público B2B.
  */
 export async function getCatalogProducts(
   params: CatalogParams,
@@ -32,138 +32,207 @@ export async function getCatalogProducts(
 ): Promise<CatalogResult> {
   const canViewPrices = Boolean(authContext?.canViewPrices)
   const userStatus = authContext?.company?.status ?? (authContext?.user ? 'pending' : 'visitor')
+  const supabase = await createClient()
 
-  let filtered: PublicCatalogProduct[] = [...mockProductsList]
-
-  // 1. Filtro por Busca Termo (q)
-  if (params.query) {
-    const q = params.query.toLowerCase().trim()
-    filtered = filtered.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        p.sku.toLowerCase().includes(q) ||
-        p.brand?.name.toLowerCase().includes(q) ||
-        p.category?.name.toLowerCase().includes(q) ||
-        Object.values(p.attributes).some((v) => v.toLowerCase().includes(q)),
+  // 1. Query base
+  let query = supabase
+    .from('products')
+    .select(
+      `
+      id,
+      sku,
+      name,
+      slug,
+      short_description,
+      unit,
+      min_quantity,
+      multiple_quantity,
+      is_featured,
+      is_new_arrival,
+      category_id,
+      brand_id,
+      created_at,
+      categories!category_id (id, name, slug, is_active),
+      brands!brand_id (id, name, slug, is_active),
+      product_images (url, alt_text, is_primary, position),
+      product_variants (id, sku, name, attributes, is_active)
+      `,
+      { count: 'exact' },
     )
-  }
+    .eq('is_active', true)
+    .eq('is_published', true)
 
-  // 2. Filtro por Categoria
+  // 2. Filtro Categoria
   if (params.category) {
-    filtered = filtered.filter(
-      (p) => p.category?.slug.toLowerCase() === params.category!.toLowerCase(),
-    )
+    const { data } = await supabase
+      .from('categories')
+      .select('id')
+      .eq('slug', params.category.toLowerCase())
+      .eq('is_active', true)
+      .maybeSingle()
+
+    const catData = data as { id: string } | null
+    if (catData?.id) {
+      query = query.eq('category_id', catData.id)
+    } else {
+      return {
+        products: [],
+        total: 0,
+        page: params.page ?? 1,
+        perPage: params.perPage ?? 12,
+        totalPages: 1,
+        canViewPrices,
+        userStatus,
+      }
+    }
   }
 
-  // 3. Filtro por Subcategoria
-  if (params.subcategory) {
-    filtered = filtered.filter(
-      (p) => p.subcategorySlug?.toLowerCase() === params.subcategory!.toLowerCase(),
-    )
-  }
-
-  // 4. Filtro por Marcas (Múltiplas)
+  // 3. Filtro Marcas
   if (params.brands && params.brands.length > 0) {
     const brandSlugs = params.brands.map((b) => b.toLowerCase())
-    filtered = filtered.filter(
-      (p) => p.brand && brandSlugs.includes(p.brand.slug.toLowerCase()),
-    )
-  }
+    const { data } = await supabase
+      .from('brands')
+      .select('id')
+      .in('slug', brandSlugs)
+      .eq('is_active', true)
 
-  // 5. Filtro por Disponibilidade
-  if (params.availability) {
-    filtered = filtered.filter((p) => p.stockStatus === params.availability)
-  }
-
-  // 6. Toggles: Lançamentos / Promoções / Mais Vendidos
-  if (params.isNew) filtered = filtered.filter((p) => p.isNew)
-  if (params.isPromotion) filtered = filtered.filter((p) => p.isPromotion)
-  if (params.isBestSeller) filtered = filtered.filter((p) => p.isBestSeller)
-
-  // 7. Filtro por Faixa de Quantidade Mínima
-  if (params.minQuantityRange) {
-    if (params.minQuantityRange === 'up_to_6') filtered = filtered.filter((p) => p.min_quantity <= 6)
-    else if (params.minQuantityRange === '7_to_12') filtered = filtered.filter((p) => p.min_quantity >= 7 && p.min_quantity <= 12)
-    else if (params.minQuantityRange === '13_to_24') filtered = filtered.filter((p) => p.min_quantity >= 13 && p.min_quantity <= 24)
-    else if (params.minQuantityRange === '25_plus') filtered = filtered.filter((p) => p.min_quantity >= 25)
-  }
-
-  // 8. Filtro por Unidade de Venda
-  if (params.unit) {
-    filtered = filtered.filter((p) => p.unit.toLowerCase() === params.unit!.toLowerCase())
-  }
-
-  // 9. Filtro por Atributos Dinâmicos (ex: Material, Voltagem)
-  if (params.attributes) {
-    Object.entries(params.attributes).forEach(([attrKey, allowedValues]) => {
-      if (allowedValues && allowedValues.length > 0) {
-        const allowedLower = allowedValues.map((v) => v.toLowerCase())
-        filtered = filtered.filter((p) => {
-          const val = p.attributes[attrKey]
-          return val && allowedLower.includes(val.toLowerCase())
-        })
+    const brandList = (data ?? []) as Array<{ id: string }>
+    const brandIds = brandList.map((b) => b.id)
+    if (brandIds.length > 0) {
+      query = query.in('brand_id', brandIds)
+    } else {
+      return {
+        products: [],
+        total: 0,
+        page: params.page ?? 1,
+        perPage: params.perPage ?? 12,
+        totalPages: 1,
+        canViewPrices,
+        userStatus,
       }
-    })
+    }
   }
 
-  // 10. Filtro e Ordenação por Preço (EXCLUSIVO PARA USUÁRIOS AUTORIZADOS)
-  let resultList: CatalogProduct[] = []
-
-  if (canViewPrices) {
-    // Anexar preços privados aos produtos filtrados
-    let listWithPrices: CatalogProduct[] = filtered.map((p) => ({
-      ...p,
-      price: mockProtectedPrices[p.id] ?? {
-        unit_price: 199.90,
-        promotional_price: null,
-        effective_price: 199.90,
-        is_on_promotion: false,
-      },
-    }))
-
-    // Filtro por faixa de preço (minPrice / maxPrice)
-    if (params.minPrice !== undefined) {
-      listWithPrices = listWithPrices.filter(
-        (p) => p.price && p.price.effective_price >= params.minPrice!,
-      )
+  // 4. Busca por termo
+  if (params.query) {
+    const q = params.query.trim()
+    if (q) {
+      query = query.or(`name.ilike.%${q}%,sku.ilike.%${q}%`)
     }
-    if (params.maxPrice !== undefined) {
-      listWithPrices = listWithPrices.filter(
-        (p) => p.price && p.price.effective_price <= params.maxPrice!,
-      )
-    }
-
-    // Ordenação por preço
-    if (params.sort === 'menor-preco') {
-      listWithPrices.sort((a, b) => (a.price?.effective_price ?? 0) - (b.price?.effective_price ?? 0))
-    } else if (params.sort === 'maior-preco') {
-      listWithPrices.sort((a, b) => (b.price?.effective_price ?? 0) - (a.price?.effective_price ?? 0))
-    }
-
-    resultList = listWithPrices
-  } else {
-    // Para visitantes ou clientes não aprovados: NENHUM objeto de preço é incluído ou consultado!
-    resultList = filtered.map(({ ...publicProduct }) => publicProduct)
   }
 
-  // Ordenações Padrão (Sem preço)
-  if (params.sort === 'nome-asc') {
-    resultList.sort((a, b) => a.name.localeCompare(b.name))
-  } else if (params.sort === 'nome-desc') {
-    resultList.sort((a, b) => b.name.localeCompare(a.name))
+  // 5. Toggles
+  if (params.isNew) {
+    query = query.eq('is_new_arrival', true)
+  }
+  if (params.isBestSeller) {
+    query = query.eq('is_featured', true)
   }
 
-  // 11. Paginação Real
-  const total = resultList.length
-  const page = params.page ?? 1
-  const perPage = params.perPage ?? 12
+  // 6. Ordenação
+  const sortMap: Record<string, { column: string; ascending: boolean }> = {
+    'nome-asc': { column: 'name', ascending: true },
+    'nome-desc': { column: 'name', ascending: false },
+    'mais-recentes': { column: 'created_at', ascending: false },
+    relevancia: { column: 'created_at', ascending: false },
+  }
+
+  const sortConfig = sortMap[params.sort ?? 'relevancia'] ?? sortMap['relevancia']
+  query = query.order(sortConfig.column, { ascending: sortConfig.ascending })
+
+  // 7. Paginação
+  const page = Math.max(1, params.page ?? 1)
+  const perPage = Math.min(48, Math.max(1, params.perPage ?? 12))
+  const startIndex = (page - 1) * perPage
+  const endIndex = startIndex + perPage - 1
+
+  query = query.range(startIndex, endIndex)
+
+  const { data, count, error } = await query
+
+  if (error) {
+    console.error('Erro ao consultar catálogo:', error.message)
+    return {
+      products: [],
+      total: 0,
+      page,
+      perPage,
+      totalPages: 1,
+      canViewPrices,
+      userStatus,
+    }
+  }
+
+  const rawProducts = (data ?? []) as unknown as Array<{
+    id: string
+    sku: string
+    name: string
+    slug: string
+    short_description: string | null
+    unit: string
+    min_quantity: number
+    multiple_quantity: number | null
+    categories: { id: string; name: string; slug: string; is_active: boolean } | null
+    brands: { id: string; name: string; slug: string; is_active: boolean } | null
+    product_images: Array<{ url: string; alt_text: string | null; is_primary: boolean; position: number }> | null
+    product_variants: Array<{ id: string; sku: string; name: string; attributes: Record<string, string>; is_active: boolean }> | null
+  }>
+
+  const total = count ?? 0
   const totalPages = Math.ceil(total / perPage) || 1
 
-  const startIndex = (page - 1) * perPage
-  const paginatedProducts = resultList.slice(startIndex, startIndex + perPage)
+  const products: CatalogProduct[] = await Promise.all(
+    rawProducts.map(async (p) => {
+      const images = (p.product_images ?? [])
+        .sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0) || (a.position ?? 0) - (b.position ?? 0))
+        .map((img) => getProductImageUrl(img.url))
+
+      if (images.length === 0) {
+        images.push('/placeholder-product.png')
+      }
+
+      const activeVariants = (p.product_variants ?? []).filter((v) => v.is_active)
+      const primaryVariant = activeVariants[0]
+
+      let priceInfo: PriceInfo | undefined = undefined
+
+      if (canViewPrices && primaryVariant?.id) {
+        const { data: priceResult } = (await (supabase.rpc as any)('get_effective_price_for_session', {
+          p_variant_id: primaryVariant.id,
+        })) as { data: Array<{ unit_price: number; promotional_price: number | null; effective_price: number; is_on_promotion: boolean }> | null }
+
+        if (priceResult && priceResult.length > 0) {
+          const row = priceResult[0]
+          priceInfo = {
+            unit_price: row.unit_price,
+            promotional_price: row.promotional_price,
+            effective_price: row.effective_price,
+            is_on_promotion: row.is_on_promotion,
+          }
+        }
+      }
+
+      const categoryObj = p.categories && p.categories.is_active ? { id: p.categories.id, name: p.categories.name, slug: p.categories.slug } : null
+      const brandObj = p.brands && p.brands.is_active ? { id: p.brands.id, name: p.brands.name, slug: p.brands.slug } : null
+
+      return {
+        id: p.id,
+        sku: p.sku,
+        name: p.name,
+        slug: p.slug,
+        images,
+        unit: p.unit,
+        min_quantity: p.min_quantity,
+        multiple_quantity: p.multiple_quantity ?? 1,
+        category: categoryObj,
+        brand: brandObj,
+        price: priceInfo,
+      }
+    }),
+  )
 
   return {
-    products: paginatedProducts,
+    products,
     total,
     page,
     perPage,
@@ -174,54 +243,47 @@ export async function getCatalogProducts(
 }
 
 /**
- * Retorna as opções de filtros disponíveis baseadas no catálogo.
+ * Retorna as opções de filtros reais do banco.
  */
 export async function getCatalogFilterOptions(
-  params: CatalogParams,
+  _params: CatalogParams,
   authContext: AuthContext,
 ): Promise<CatalogFilterOptions> {
   const canViewPrices = Boolean(authContext?.canViewPrices)
+  const supabase = await createClient()
 
-  const categories = [
-    { name: 'Utilidades Domésticas', slug: 'utilidades', count: 12 },
-    { name: 'Brinquedos & Jogos', slug: 'brinquedos', count: 8 },
-    { name: 'Ferramentas & Acessórios', slug: 'ferramentas', count: 14 },
-    { name: 'Papelaria & Escritório', slug: 'papelaria', count: 6 },
-    { name: 'Eletrônicos & Áudio', slug: 'eletronicos', count: 9 },
-    { name: 'Decoração & Lar', slug: 'decoracao', count: 5 },
-  ]
+  const [{ data: catsData }, { data: brandsListData }] = await Promise.all([
+    supabase.from('categories').select('name, slug').eq('is_active', true).order('name'),
+    supabase.from('brands').select('name, slug').eq('is_active', true).order('name'),
+  ])
 
-  const subcategories = [
-    { name: 'Cozinha', slug: 'cozinha', count: 6 },
-    { name: 'Organização', slug: 'organizacao', count: 4 },
-    { name: 'Manuais', slug: 'manuais', count: 5 },
-    { name: 'Elétricas', slug: 'eletricas', count: 4 },
-    { name: 'Educativos', slug: 'educativos', count: 3 },
-  ]
+  const cats = (catsData ?? []) as Array<{ name: string; slug: string }>
+  const brandsList = (brandsListData ?? []) as Array<{ name: string; slug: string }>
 
-  const brands = [
-    { name: 'Marca Premium B2B', slug: 'marca-premium', count: 12 },
-    { name: 'NutriMax Atacado', slug: 'nutrimax', count: 5 },
-    { name: 'Ferramentas Pro', slug: 'ferramentas-pro', count: 14 },
-    { name: 'PapelMax B2B', slug: 'papelmax', count: 6 },
-    { name: 'TechMaster', slug: 'techmaster', count: 9 },
-    { name: 'DecorLar', slug: 'decorlar', count: 5 },
-    { name: 'PlayToys B2B', slug: 'playtoys', count: 8 },
-  ]
-
-  const units = ['CX', 'FD', 'UN', 'KT', 'PC']
-
-  const availableAttributes = {
-    Material: ['Vidro', 'Aco Inox', 'Plastico', 'Aluminio', 'Aco Cromo'],
-    Voltagem: ['220V', '110V', 'Bivolt', 'Isolado 1000V'],
-  }
+  const categories = (cats ?? []).map((c) => ({ name: c.name, slug: c.slug, count: 0 }))
+  const brands = (brandsList ?? []).map((b) => ({ name: b.name, slug: b.slug, count: 0 }))
+  const units = ['UN', 'CX', 'FD', 'KIT', 'PC']
 
   return {
     categories,
-    subcategories,
+    subcategories: [],
     brands,
     units,
-    availableAttributes,
-    priceBounds: canViewPrices ? { min: 50, max: 1000 } : undefined,
+    availableAttributes: {},
+    priceBounds: canViewPrices ? { min: 1, max: 10000 } : undefined,
   }
+}
+
+/**
+ * Retorna a contagem total de produtos ativos e publicados no catálogo.
+ */
+export async function getPublicCatalogCount(): Promise<number> {
+  const supabase = await createClient()
+  const { count } = await supabase
+    .from('products')
+    .select('id', { count: 'exact', head: true })
+    .eq('is_active', true)
+    .eq('is_published', true)
+
+  return count ?? 0
 }

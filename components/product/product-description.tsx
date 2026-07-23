@@ -16,13 +16,13 @@ export function ProductDescription({ product }: ProductDescriptionProps) {
       <div className="space-y-4 text-xs sm:text-sm text-slate-600 leading-relaxed">
         <p>{product.detail.longDescription}</p>
 
-        {product.detail.applications.length > 0 && (
+        {product.detail.applications && product.detail.applications.length > 0 && (
           <div className="space-y-2 pt-2">
             <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
               Principais Aplicações Comerciais:
             </h3>
             <ul className="space-y-1.5">
-              {product.detail.applications.map((app) => (
+              {product.detail.applications.map((app: string) => (
                 <li key={app} className="flex items-center gap-2 text-slate-700">
                   <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
                   <span>{app}</span>

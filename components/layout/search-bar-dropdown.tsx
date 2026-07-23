@@ -4,8 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { SearchInput } from '@/components/ui/search-input'
-import { mockProductsList, type PublicCatalogProduct } from '@/lib/mocks/mock-products'
-import { mockDepartments } from '@/lib/mocks/mock-navigation'
+import type { CatalogProduct } from '@/types/product.types'
 import { ChevronRight, Package, Tag, ArrowUpRight } from 'lucide-react'
 
 export function SearchBarDropdown() {
@@ -13,7 +12,7 @@ export function SearchBarDropdown() {
   const [isOpen, setIsOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState<{
-    products: PublicCatalogProduct[]
+    products: CatalogProduct[]
     categories: { name: string; slug: string }[]
     brands: string[]
   }>({ products: [], categories: [], brands: [] })
@@ -32,30 +31,11 @@ export function SearchBarDropdown() {
     setIsOpen(true)
 
     const timer = setTimeout(() => {
-      const q = query.toLowerCase()
-
-      const matchedProducts = mockProductsList.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          p.sku.toLowerCase().includes(q) ||
-          p.brand?.name.toLowerCase().includes(q) ||
-          p.category?.name.toLowerCase().includes(q),
-      )
-
-      const matchedCategories = mockDepartments.filter((c) =>
-        c.name.toLowerCase().includes(q),
-      )
-
-      const matchedBrands = Array.from(
-        new Set(mockProductsList.map((p) => p.brand?.name).filter(Boolean) as string[]),
-      ).filter((b) => b.toLowerCase().includes(q))
-
       setResults({
-        products: matchedProducts.slice(0, 5),
-        categories: matchedCategories.slice(0, 3),
-        brands: matchedBrands.slice(0, 3),
+        products: [],
+        categories: [],
+        brands: [],
       })
-
       setLoading(false)
     }, 250)
 
