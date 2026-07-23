@@ -3,6 +3,7 @@ import type { AuthContext } from '@/types/auth.types'
 import type { CatalogProduct, PriceInfo } from '@/types/product.types'
 import type { CatalogParams } from '@/lib/utils/catalog-params'
 import { getProductImageUrl } from '@/lib/utils/storage-url'
+import { getCatalogPricingForCurrentCustomer } from '@/lib/data/pricing'
 
 export interface CatalogResult {
   products: CatalogProduct[]
@@ -193,55 +194,63 @@ export async function getCatalogProducts(
   const total = count ?? 0
   const totalPages = Math.ceil(total / perPage) || 1
 
-  const products: CatalogProduct[] = await Promise.all(
-    rawProducts.map(async (p) => {
-      const images = (p.product_images ?? [])
-        .sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0) || (a.position ?? 0) - (b.position ?? 0))
-        .map((img) => getProductImageUrl(img.url))
-
-      if (images.length === 0) {
-        images.push('/placeholder-product.png')
+  // Se o usuário puder ver preços, buscar preços em LOTE para as variantes principais da página atual
+  const primaryVariantIds: string[] = []
+  if (canViewPrices) {
+    for (const p of rawProducts) {
+      const activeVars = (p.product_variants ?? []).filter((v) => v.is_active)
+      if (activeVars[0]?.id) {
+        primaryVariantIds.push(activeVars[0].id)
       }
+    }
+  }
 
-      const activeVariants = (p.product_variants ?? []).filter((v) => v.is_active)
-      const primaryVariant = activeVariants[0]
+  const batchPricing = canViewPrices ? await getCatalogPricingForCurrentCustomer(primaryVariantIds) : new Map<string, PriceInfo>()
 
-      let priceInfo: PriceInfo | undefined = undefined
+  let products: CatalogProduct[] = rawProducts.map((p) => {
+    const images = (p.product_images ?? [])
+      .sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0) || (a.position ?? 0) - (b.position ?? 0))
+      .map((img) => getProductImageUrl(img.url))
 
-      if (canViewPrices && primaryVariant?.id) {
-        const { data: priceResult } = (await (supabase.rpc as any)('get_effective_price_for_session', {
-          p_variant_id: primaryVariant.id,
-        })) as { data: Array<{ unit_price: number; promotional_price: number | null; effective_price: number; is_on_promotion: boolean }> | null }
+    if (images.length === 0) {
+      images.push('/placeholder-product.png')
+    }
 
-        if (priceResult && priceResult.length > 0) {
-          const row = priceResult[0]
-          priceInfo = {
-            unit_price: row.unit_price,
-            promotional_price: row.promotional_price,
-            effective_price: row.effective_price,
-            is_on_promotion: row.is_on_promotion,
-          }
-        }
-      }
+    const activeVariants = (p.product_variants ?? []).filter((v) => v.is_active)
+    const primaryVariant = activeVariants[0]
 
-      const categoryObj = p.categories && p.categories.is_active ? { id: p.categories.id, name: p.categories.name, slug: p.categories.slug } : null
-      const brandObj = p.brands && p.brands.is_active ? { id: p.brands.id, name: p.brands.name, slug: p.brands.slug } : null
+    let priceInfo: PriceInfo | undefined = undefined
+    if (canViewPrices && primaryVariant?.id) {
+      priceInfo = batchPricing.get(primaryVariant.id)
+    }
 
-      return {
-        id: p.id,
-        sku: p.sku,
-        name: p.name,
-        slug: p.slug,
-        images,
-        unit: p.unit,
-        min_quantity: p.min_quantity,
-        multiple_quantity: p.multiple_quantity ?? 1,
-        category: categoryObj,
-        brand: brandObj,
-        price: priceInfo,
-      }
-    }),
-  )
+    const categoryObj = p.categories && p.categories.is_active ? { id: p.categories.id, name: p.categories.name, slug: p.categories.slug } : null
+    const brandObj = p.brands && p.brands.is_active ? { id: p.brands.id, name: p.brands.name, slug: p.brands.slug } : null
+
+    return {
+      id: p.id,
+      sku: p.sku,
+      name: p.name,
+      slug: p.slug,
+      images,
+      unit: p.unit,
+      min_quantity: p.min_quantity,
+      multiple_quantity: p.multiple_quantity ?? 1,
+      category: categoryObj,
+      brand: brandObj,
+      price: priceInfo,
+    }
+  })
+
+  // 8. Ordenação no Servidor por Preço Efetivo para Aprovados (menor-preco / maior-preco)
+  if (canViewPrices && (params.sort === 'menor-preco' || params.sort === 'maior-preco')) {
+    const isAsc = params.sort === 'menor-preco'
+    products = products.sort((a, b) => {
+      const priceA = a.price?.effective_price ?? Infinity
+      const priceB = b.price?.effective_price ?? Infinity
+      return isAsc ? priceA - priceB : priceB - priceA
+    })
+  }
 
   return {
     products,

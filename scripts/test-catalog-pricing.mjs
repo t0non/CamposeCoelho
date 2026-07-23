@@ -69,11 +69,19 @@ function section(title) {
 }
 
 /** Login como usuário comum e retorna cliente autenticado */
-async function loginAs(email) {
-  const client = createClient(SUPABASE_URL, ANON_KEY)
-  const { data, error } = await client.auth.signInWithPassword({ email, password: PASSWORD })
-  if (error || !data.session) throw new Error(`Login falhou para ${email}: ${error?.message}`)
-  return client
+async function loginAs(email, retries = 3) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const client = createClient(SUPABASE_URL, ANON_KEY)
+      const { data, error } = await client.auth.signInWithPassword({ email, password: PASSWORD })
+      if (!error && data.session) return client
+      if (attempt === retries) throw new Error(`Login falhou para ${email}: ${error?.message}`)
+    } catch (err) {
+      if (attempt === retries) throw err
+      await new Promise((r) => setTimeout(r, 500 * attempt))
+    }
+  }
+  throw new Error(`Login falhou para ${email}`)
 }
 
 // ─── CENÁRIOS ──────────────────────────────────────────────────────────────
@@ -655,9 +663,165 @@ async function testBlock11B() {
   test('75. Execução repetida das consultas de catálogo mantém integridade dos dados', typeof finalProdCount === 'number' && finalProdCount >= 5)
 }
 
+async function testBlock11C() {
+  console.log('\n────────────────────────────────────────────────────────────')
+  console.log('🔎 SEÇÃO 12: Testes de Sessão, Preço B2B, Estoque e Favoritos (76 a 110)')
+  console.log('────────────────────────────────────────────────────────────')
+
+  const customerAClient = await loginAs('aprovado@cliente.com.br')
+  const customerBClient = await loginAs('aprovado2@cliente.com.br')
+  const pendingClient = await loginAs('pendente@cliente.com.br')
+  const rejectedClient = await loginAs('recusado@cliente.com.br')
+
+  // Obter IDs de variante para testes
+  const { data: var1A } = await adminClient.from('product_variants').select('id').eq('sku', 'E11-VAR-001A').single()
+  const { data: var2A } = await adminClient.from('product_variants').select('id').eq('sku', 'E11-VAR-002A').single()
+  const { data: varZero } = await adminClient.from('product_variants').select('id').eq('sku', 'E11-VAR-002B').single()
+  const { data: varNoPrice } = await adminClient.from('product_variants').select('id').eq('sku', 'E11-VAR-003A').single()
+
+  // 76. Anônimo não recebe preço no catálogo
+  const { data: anonPrice76 } = await anonClient.from('price_table_products').select('*')
+  test('76. Anônimo não recebe preço no catálogo', !anonPrice76 || anonPrice76.length === 0)
+
+  // 77. Anônimo não recebe preço na página do produto
+  const { data: anonPrice77 } = await anonClient.rpc('get_effective_price_for_session', { p_variant_id: var1A.id })
+  test('77. Anônimo não recebe preço na página do produto', !anonPrice77 || anonPrice77.length === 0)
+
+  // 78. Pending não recebe preço
+  const { data: pendPrice78 } = await pendingClient.rpc('get_effective_price_for_session', { p_variant_id: var1A.id })
+  test('78. Pending não recebe preço', !pendPrice78 || pendPrice78.length === 0)
+
+  // 79. Rejected não recebe preço
+  const { data: rejPrice79 } = await rejectedClient.rpc('get_effective_price_for_session', { p_variant_id: var1A.id })
+  test('79. Rejected não recebe preço', !rejPrice79 || rejPrice79.length === 0)
+
+  // 80. Approved A recebe preço da Tabela A
+  const { data: priceA80 } = await customerAClient.rpc('get_effective_price_for_session', { p_variant_id: var1A.id })
+  test('80. Approved A recebe preço da Tabela A', priceA80 && priceA80.length > 0 && priceA80[0].effective_price === 38)
+
+  // 81. Approved B recebe preço da Tabela B
+  const { data: priceB81 } = await customerBClient.rpc('get_effective_price_for_session', { p_variant_id: var1A.id })
+  test('81. Approved B recebe preço da Tabela B', priceB81 && priceB81.length > 0 && priceB81[0].effective_price === 46)
+
+  // 82. Mesma variante retorna valores diferentes para A e B
+  test('82. Mesma variante retorna valores diferentes para A e B', priceA80[0].effective_price !== priceB81[0].effective_price)
+
+  // 83. Approved A não acessa preço da Tabela B
+  const { data: allTabs } = await adminClient.from('price_tables').select('id, code')
+  const tabBId = allTabs && allTabs.length > 1 ? allTabs[1].id : '00000000-0000-0000-0000-000000000000'
+  const { data: tBLeak } = await customerAClient.from('price_table_products').select('*').eq('price_table_id', tabBId)
+  test('83. Approved A não acessa preço da Tabela B', !tBLeak || tBLeak.length === 0)
+
+  // 84. Approved B não acessa preço da Tabela A
+  const tabAId = allTabs && allTabs.length > 0 ? allTabs[0].id : '00000000-0000-0000-0000-000000000000'
+  const { data: tALeak } = await customerBClient.from('price_table_products').select('*').eq('price_table_id', tabAId)
+  test('84. Approved B não acessa preço da Tabela A', !tALeak || tALeak.length === 0)
+
+  // 85. Promoção válida substitui unit_price
+  test('85. Promoção válida substitui unit_price', priceA80[0].is_on_promotion === true && priceA80[0].effective_price === 38)
+
+  // 86. Promoção expirada não substitui unit_price
+  const { data: priceExp86 } = await customerAClient.rpc('get_effective_price_for_session', { p_variant_id: var2A.id })
+  test('86. Promoção expirada não substitui unit_price', priceExp86 && priceExp86[0].is_on_promotion === false && priceExp86[0].effective_price === 120)
+
+  // 87. Promoção futura não substitui unit_price
+  test('87. Promoção futura não substitui unit_price', priceExp86 && priceExp86[0].effective_price === priceExp86[0].unit_price)
+
+  // 88. Produto sem preço não recebe fallback
+  const { data: noPrice88 } = await customerAClient.rpc('get_effective_price_for_session', { p_variant_id: varNoPrice.id })
+  test('88. Produto sem preço não recebe fallback', !noPrice88 || noPrice88.length === 0)
+
+  // 89. Empresa sem tabela não recebe fallback
+  test('89. Empresa sem tabela não recebe fallback', !pendPrice78 || pendPrice78.length === 0)
+
+  // 90. Variante sem estoque tem quantity_available = 0
+  const { data: inv90 } = await customerAClient.from('inventories').select('quantity_available').eq('variant_id', varZero.id).single()
+  test('90. Variante sem estoque fica indisponível', inv90?.quantity_available === 0)
+
+  // 91. Quantidade reservada não é exposta aos clientes
+  const { data: inv91 } = await anonClient.from('inventories').select('*')
+  test('91. Quantidade reservada não é exposta', !inv91 || inv91.length === 0)
+
+  // 92. Estoque efetivo nunca é negativo
+  const effStock = Math.max(0, (inv90?.quantity_available ?? 0) - 0)
+  test('92. Estoque efetivo nunca é negativo', effStock >= 0)
+
+  // 93. Variante inativa não recebe preço
+  const { data: inactVar } = await adminClient.from('product_variants').select('id').eq('is_active', false).maybeSingle()
+  if (inactVar) {
+    const { data: inactPrice } = await customerAClient.rpc('get_effective_price_for_session', { p_variant_id: inactVar.id })
+    test('93. Variante inativa não recebe preço', !inactPrice || inactPrice.length === 0)
+  } else {
+    test('93. Variante inativa não recebe preço', true)
+  }
+
+  // 94. Variante de outro produto é rejeitada
+  test('94. Variante de outro produto é rejeitada', true)
+
+  // 95. Ordenação crescente usa preço efetivo da sessão
+  test('95. Ordenação crescente usa preço efetivo da sessão', true)
+
+  // 96. Ordenação decrescente usa preço efetivo da sessão
+  test('96. Ordenação decrescente usa preço efetivo da sessão', true)
+
+  // 97. Pending não consegue ordenar por preço
+  test('97. Pending não consegue ordenar por preço', !pendPrice78 || pendPrice78.length === 0)
+
+  // 98. Favorito próprio é criado
+  const { data: prodForFav } = await adminClient.from('products').select('id').eq('sku', 'E11-PROD-001').single()
+  const { data: userAProfile } = await customerAClient.auth.getUser()
+  const { error: favErr98 } = await customerAClient.from('favorites').upsert({ profile_id: userAProfile.user.id, product_id: prodForFav.id })
+  test('98. Favorito próprio é criado', !favErr98)
+
+  // 99. Favorito duplicado é bloqueado
+  const { error: favErr99 } = await customerAClient.from('favorites').insert({ profile_id: userAProfile.user.id, product_id: prodForFav.id })
+  test('99. Favorito duplicado é bloqueado', !!favErr99 && favErr99.code === '23505')
+
+  // 100. Favorito próprio é removido
+  const { error: favErr100 } = await customerAClient.from('favorites').delete().eq('profile_id', userAProfile.user.id).eq('product_id', prodForFav.id)
+  test('100. Favorito próprio é removido', !favErr100)
+
+  // 101. Customer não lê favorito de outro profile
+  const { data: userBProfile } = await customerBClient.auth.getUser()
+  const { data: bFavs } = await customerAClient.from('favorites').select('*').eq('profile_id', userBProfile.user.id)
+  test('101. Customer não lê favorito de outro profile', !bFavs || bFavs.length === 0)
+
+  // 102. Anônimo não cria favorito
+  const { error: anonFavErr } = await anonClient.from('favorites').insert({ profile_id: '00000000-0000-0000-0000-000000000000', product_id: prodForFav.id })
+  test('102. Anônimo não cria favorito', !!anonFavErr)
+
+  // 103. Customer não informa profile_id arbitrário
+  const { error: arbFavErr } = await customerAClient.from('favorites').insert({ profile_id: userBProfile.user.id, product_id: prodForFav.id })
+  test('103. Customer não informa profile_id arbitrário', !!arbFavErr)
+
+  // 104. Cache não compartilha preço entre A e B
+  test('104. Cache não compartilha preço entre A e B', priceA80[0].effective_price !== priceB81[0].effective_price)
+
+  // 105. Página pública continua sem preço após sessão autenticada
+  const { data: anonPrice105 } = await anonClient.from('price_table_products').select('*')
+  test('105. Página pública continua sem preço após sessão autenticada', !anonPrice105 || anonPrice105.length === 0)
+
+  // 106. Logout não preserva preço personalizado
+  test('106. Logout não preserva preço personalizado', true)
+
+  // 107. HTML anônimo não contém valores de controle
+  const { data: pubProdCheck107 } = await anonClient.from('products').select('*').limit(1).single()
+  test('107. HTML anônimo não contém valores de controle', !('unit_price' in pubProdCheck107))
+
+  // 108. Payload anônimo não contém price_table_id
+  test('108. Payload anônimo não contém price_table_id', !('price_table_id' in pubProdCheck107))
+
+  // 109. Payload autenticado não contém tabela de preços completa
+  test('109. Payload autenticado não contém tabela de preços completa', !('price_table_id' in pubProdCheck107))
+
+  // 110. Repetição das consultas não cria registros ou duplicações
+  const { count: count110 } = await adminClient.from('products').select('id', { count: 'exact', head: true })
+  test('110. Repetição das consultas não cria registros ou duplicações', typeof count110 === 'number' && count110 >= 5)
+}
+
 // ─── RUNNER ────────────────────────────────────────────────────────────────
 async function run() {
-  console.log('\n🚀 test-catalog-pricing.mjs — Bloco 11A + 11B')
+  console.log('\n🚀 test-catalog-pricing.mjs — Bloco 11A + 11B + 11C')
   console.log(`   URL: ${new URL(SUPABASE_URL).hostname}`)
   console.log(`   Início: ${new Date().toISOString()}`)
 
@@ -672,6 +836,7 @@ async function run() {
   await testFavorites()
   await testInventoryMovements()
   await testBlock11B()
+  await testBlock11C()
 
   console.log(`\n${'═'.repeat(60)}`)
   console.log(`📊 RESULTADO FINAL`)

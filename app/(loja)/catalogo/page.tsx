@@ -1,4 +1,6 @@
 import type { Metadata } from 'next'
+
+export const dynamic = 'force-dynamic'
 import { Container } from '@/components/ui/container'
 import { getAuthContext } from '@/lib/supabase/auth'
 import { getCatalogProducts, getCatalogFilterOptions } from '@/lib/data/catalog'
