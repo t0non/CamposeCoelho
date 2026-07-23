@@ -51,13 +51,14 @@ let passed = 0
 let failed = 0
 const failures = []
 
-function test(name, cond, detail = '') {
+function test(name, cond, detail = '', error = null) {
+  if (error && error.message && error.message.toLowerCase().includes('recursion')) cond = false;
   if (cond) {
     console.log(`  ✅ PASS: ${name}`)
     passed++
   } else {
-    console.log(`  ❌ FAIL: ${name}${detail ? ' | ' + detail : ''}`)
-    failures.push({ name, detail })
+    console.log(`  ❌ FAIL: ${name}${detail ? ' | ' + detail : ''}${error ? ' | ERR: ' + error.message : ''}`)
+    failures.push({ name, detail, error: error ? error.message : null })
     failed++
   }
 }
