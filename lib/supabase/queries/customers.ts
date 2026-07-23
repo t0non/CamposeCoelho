@@ -1,6 +1,8 @@
 import { createAdminClient } from '@/lib/supabase/server'
 import { requireAdmin } from '@/lib/supabase/auth'
-import type { CompanyStatus } from '@/types/database.types'
+import type { Database } from '@/types/database.types'
+
+type CompanyStatus = Database['public']['Enums']['company_status']
 
 /**
  * Lista clientes para o painel admin.

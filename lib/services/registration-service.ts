@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/client'
+import { saveCompanyAction } from '@/app/actions/company'
 import type { AddressData, FullRegistrationData, RegistrationSubmitResult } from '@/types/registration.types'
 
 /**
@@ -39,67 +40,85 @@ export async function lookupAddressByCep(cep: string): Promise<AddressData | nul
     neighborhood: 'Bela Vista',
     city: 'São Paulo',
     state: 'SP',
-    referencePoint: 'Próximo ao metrô',
+    referencePoint: '',
   }
 }
 
 /**
- * Envio do Cadastro Empresarial.
- * Opera em modo live com Supabase quando configurado, ou em modo demo se não conectado.
+ * Envio do Cadastro Empresarial Real no Supabase.
  */
 export async function submitBusinessRegistration(
   data: FullRegistrationData,
 ): Promise<RegistrationSubmitResult> {
-  const isSupabaseConfigured = Boolean(
-    process.env.NEXT_PUBLIC_SUPABASE_URL &&
-      (process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
-  )
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const supabase = createClient() as any
 
-  if (isSupabaseConfigured) {
-    try {
-      const supabase = createClient()
+  // 1. Verificar se já existe usuário logado ou se deve criar nova conta via SignUp
+  let { data: { user } } = await supabase.auth.getUser()
 
-      // Tenta criar usuário no Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: data.responsible.email,
-        password: data.responsible.password || 'B2bUser@2026',
-        options: {
-          data: {
-            full_name: data.responsible.fullName,
-            phone: data.responsible.phone,
-            cpf: data.responsible.cpf,
-            role: 'customer',
-          },
+  if (!user && data.responsible?.email && data.responsible?.password) {
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email: data.responsible.email.trim(),
+      password: data.responsible.password,
+      options: {
+        data: {
+          full_name: data.responsible.fullName.trim(),
+          phone: data.responsible.phone.replace(/\D/g, ''),
+          role: 'customer',
         },
+      },
+    })
+
+    if (authError && !authError.message.includes('User already registered')) {
+      throw new Error(`Erro ao criar conta de usuário: ${authError.message}`)
+    }
+
+    user = authData.user || user
+  }
+
+  // 2. Salvar dados empresariais e endereço
+  const saved = await saveCompanyAction({
+    cnpj: data.company.cnpj,
+    company_name: data.company.companyName,
+    trade_name: data.company.tradingName,
+    state_registration: data.company.stateRegistration,
+    segment: data.company.segment,
+    phone: data.company.phone,
+    whatsapp: data.company.whatsapp,
+    email: data.company.email,
+    website: data.company.website,
+    zip_code: data.addresses.fiscal.cep,
+    street: data.addresses.fiscal.street,
+    number: data.addresses.fiscal.number,
+    complement: data.addresses.fiscal.complement,
+    neighborhood: data.addresses.fiscal.neighborhood,
+    city: data.addresses.fiscal.city,
+    state: data.addresses.fiscal.state,
+  })
+
+  // 3. Salvar metadados de documentos em company_documents se houver
+  if (data.documents && data.documents.length > 0 && saved.companyId) {
+    for (const doc of data.documents) {
+      const cleanFileName = doc.fileName.replace(/[^a-zA-Z0-9._-]/g, '_')
+      const filePath = `${saved.companyId}/${doc.category}/${Date.now()}_${cleanFileName}`
+
+      await supabase.from('company_documents').insert({
+        company_id: saved.companyId,
+        document_type: doc.category,
+        file_path: filePath,
+        file_name: doc.fileName,
+        status: 'pending',
       })
-
-      if (!authError || authError.message.includes('User already registered')) {
-        const randomNum = Math.floor(100000 + Math.random() * 900000)
-        const protocol = `B2B-2026-${randomNum}`
-
-        return {
-          success: true,
-          mode: 'live',
-          protocol,
-          submittedAt: new Date().toLocaleDateString('pt-BR'),
-          message: 'Solicitação de cadastro empresarial enviada para análise comercial.',
-        }
-      }
-    } catch {
-      // Fallback para retorno de protocolo se houver bloqueio de CORS ou rede
     }
   }
 
-  // Modo de demonstração (fallback gracioso)
-  await new Promise((resolve) => setTimeout(resolve, 600))
-  const randomNum = Math.floor(1000 + Math.random() * 9000)
-  const protocol = `DEMO-2026-${randomNum}`
+  const protocol = `B2B-${(saved.companyId ?? 'NEW').slice(0, 8).toUpperCase()}`
 
   return {
     success: true,
-    mode: 'demo',
+    mode: 'live',
     protocol,
     submittedAt: new Date().toLocaleDateString('pt-BR'),
-    message: 'Cadastro preenchido com sucesso em fluxo de demonstração.',
+    message: 'Solicitação de cadastro empresarial enviada para análise comercial.',
   }
 }

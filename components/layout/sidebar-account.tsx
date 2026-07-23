@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   User,
+  Building2,
+  FileCheck,
   Package,
   Heart,
   MapPin,
@@ -13,6 +15,8 @@ import { cn } from '@/lib/utils/cn'
 
 const navItems = [
   { href: '/minha-conta', label: 'Minha Conta', icon: User, exact: true },
+  { href: '/minha-conta/empresa', label: 'Dados da Empresa', icon: Building2 },
+  { href: '/minha-conta/documentos', label: 'Documentos', icon: FileCheck },
   { href: '/minha-conta/pedidos', label: 'Meus Pedidos', icon: Package },
   { href: '/minha-conta/favoritos', label: 'Favoritos', icon: Heart },
   { href: '/minha-conta/enderecos', label: 'Endereços', icon: MapPin },
