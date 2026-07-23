@@ -184,3 +184,99 @@ export async function getCatalogPricingForCurrentCustomer(
 
   return priceMap
 }
+
+/**
+ * Helper Server-Only: Permite que Vendedores (seller/admin) consultem preços para empresas especificamente atribuídas.
+ * Valida obrigatoriamente se seller_id === user.id (ou se o usuário é admin) antes de consultar a empresa.
+ * Se a empresa não estiver atribuída ao vendedor, a requisição é REJEITADA.
+ */
+export async function getSellerCompanyPricing(
+  targetCompanyId: string,
+  variantId: string,
+): Promise<PriceInfo | undefined> {
+  if (!targetCompanyId || !variantId) return undefined
+
+  const supabase = await createClient()
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) return undefined
+
+  const { data: profileData } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .maybeSingle()
+
+  const profile = profileData as { role: string } | null
+  if (!profile || (profile.role !== 'seller' && profile.role !== 'admin')) {
+    return undefined
+  }
+
+  // Se for seller, verificar obrigatoriamente se a empresa está atribuída a ele (seller_id === user.id)
+  let query = supabase
+    .from('companies')
+    .select('id, status, price_table_id, seller_id')
+    .eq('id', targetCompanyId)
+
+  if (profile.role === 'seller') {
+    query = query.eq('seller_id', user.id)
+  }
+
+  const { data: companyData } = await query.maybeSingle()
+  const company = companyData as { id: string; status: string; price_table_id: string | null } | null
+
+  if (!company || company.status !== 'approved' || !company.price_table_id) {
+    // Empresa não atribuída ao vendedor ou não aprovada -> REJEITAR
+    return undefined
+  }
+
+  // Consultar preço para a variante naquela tabela
+  const { data: rawPrice } = await supabase
+    .from('price_table_products')
+    .select(
+      `
+      unit_price,
+      promotional_price,
+      promotion_starts_at,
+      promotion_ends_at,
+      is_active,
+      price_tables (is_active, valid_from, valid_until)
+      `,
+    )
+    .eq('price_table_id', company.price_table_id)
+    .eq('variant_id', variantId)
+    .eq('is_active', true)
+    .maybeSingle()
+
+  if (!rawPrice) return undefined
+
+  const item = rawPrice as unknown as {
+    unit_price: number
+    promotional_price: number | null
+    promotion_starts_at: string | null
+    promotion_ends_at: string | null
+    is_active: boolean
+    price_tables: { is_active: boolean; valid_from: string | null; valid_until: string | null } | null
+  }
+
+  if (!item.price_tables || !item.price_tables.is_active) return undefined
+
+  const hasValidPromo = isPromotionValid(
+    item.promotional_price,
+    item.unit_price,
+    item.promotion_starts_at,
+    item.promotion_ends_at,
+  )
+
+  const effective_price = hasValidPromo ? (item.promotional_price as number) : item.unit_price
+
+  return {
+    unit_price: Number(item.unit_price),
+    promotional_price: hasValidPromo ? Number(item.promotional_price) : null,
+    effective_price: Number(effective_price),
+    is_on_promotion: hasValidPromo,
+  }
+}
