@@ -113,11 +113,23 @@ export async function getCatalogProducts(
     }
   }
 
-  // 4. Busca por termo
+  // 4. Busca por termo (name, sku principal ou sku de variante)
   if (params.query) {
     const q = params.query.trim()
     if (q) {
-      query = query.or(`name.ilike.%${q}%,sku.ilike.%${q}%`)
+      const { data: varMatches } = await supabase
+        .from('product_variants')
+        .select('product_id')
+        .ilike('sku', `%${q}%`)
+        .eq('is_active', true)
+
+      const variantProdIds = (varMatches ?? []).map((v: { product_id: string }) => v.product_id).filter(Boolean)
+
+      if (variantProdIds.length > 0) {
+        query = query.or(`name.ilike.%${q}%,sku.ilike.%${q}%,id.in.(${variantProdIds.join(',')})`)
+      } else {
+        query = query.or(`name.ilike.%${q}%,sku.ilike.%${q}%`)
+      }
     }
   }
 

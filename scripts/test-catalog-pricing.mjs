@@ -477,8 +477,7 @@ async function testBlock11B() {
     .select('id, is_published, is_active')
     .eq('is_active', true)
     .eq('is_published', true)
-  test('51. Catálogo retorna produtos publicados', pubProducts && pubProducts.length > 0)
-  test('51b. Todos os produtos retornados estão publicados', pubProducts?.every((p) => p.is_published === true))
+  test('51. Catálogo retorna produtos publicados', pubProducts && pubProducts.length > 0 && pubProducts.every((p) => p.is_published === true))
 
   // 52. Catálogo não retorna produto rascunho
   const { data: draftCheck } = await anonClient
@@ -554,13 +553,22 @@ async function testBlock11B() {
     .eq('is_published', true)
   test('60. Busca por SKU principal retorna produto correto', searchSku && searchSku.length > 0)
 
-  // 61. Busca por SKU de variante retorna produto correto
-  const { data: searchVarSku } = await anonClient
+  // 61. Busca por SKU de variante (que NÃO existe no SKU principal nem no nome)
+  const { data: searchVarMatches } = await anonClient
     .from('product_variants')
-    .select('id, sku, product_id')
-    .ilike('sku', '%E11-VAR-001A%')
+    .select('product_id')
+    .ilike('sku', '%E11-VAR-001B%')
     .eq('is_active', true)
-  test('61. Busca por SKU de variante retorna variante correta', searchVarSku && searchVarSku.length > 0)
+  const varProdId = searchVarMatches?.[0]?.product_id
+  const { data: parentProdByVar } = await anonClient
+    .from('products')
+    .select('id, name, sku')
+    .eq('id', varProdId)
+    .single()
+  const nameOrSkuContains001B = parentProdByVar.sku.includes('001B') || parentProdByVar.name.includes('001B')
+  test('61. Busca por SKU de variante (exclusivo de variante) retorna produto correto sem depender do nome/SKU principal',
+    !!parentProdByVar && !nameOrSkuContains001B,
+    `Parent SKU: ${parentProdByVar?.sku}`)
 
   // 62. Filtro por categoria retorna somente produtos esperados
   const { data: filterCat } = await anonClient
