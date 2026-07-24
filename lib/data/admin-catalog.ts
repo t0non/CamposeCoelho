@@ -2,21 +2,40 @@ import 'server-only'
 import { createClient } from '@/lib/supabase/server'
 import { requireAdmin } from '@/lib/supabase/auth'
 
-export async function getAdminCategories(page = 1, limit = 50) {
+export async function getAdminCategories(page = 1, limit = 50, search?: string, status?: string, sort?: string) {
   await requireAdmin()
   const supabase = await createClient()
 
   const start = (page - 1) * limit
   const end = start + limit - 1
 
-  const { data, error, count } = await supabase
+  let query = supabase
     .from('categories')
-    .select('*', { count: 'exact' })
-    .order('position', { ascending: true })
-    .range(start, end)
+    .select('*, products(count)', { count: 'exact' })
+
+  if (search) {
+    query = query.or(`name.ilike.%${search}%,slug.ilike.%${search}%`)
+  }
+  
+  if (status === 'active') {
+    query = query.eq('is_active', true)
+  } else if (status === 'inactive') {
+    query = query.eq('is_active', false)
+  }
+
+  // Ordenação
+  if (sort === 'name') {
+    query = query.order('name', { ascending: true })
+  } else if (sort === 'newest') {
+    query = query.order('created_at', { ascending: false })
+  } else {
+    query = query.order('position', { ascending: true })
+  }
+
+  const { data, error, count } = await query.range(start, end)
 
   if (error) throw error
-  return { data: data || [], count: count || 0 }
+  return { data: (data as any[]) || [], count: count || 0 }
 }
 
 export async function getAdminCategoryById(id: string) {
@@ -30,24 +49,43 @@ export async function getAdminCategoryById(id: string) {
     .single()
 
   if (error) throw error
-  return data
+  return data as any
 }
 
-export async function getAdminBrands(page = 1, limit = 50) {
+export async function getAdminBrands(page = 1, limit = 50, search?: string, status?: string, sort?: string) {
   await requireAdmin()
   const supabase = await createClient()
 
   const start = (page - 1) * limit
   const end = start + limit - 1
 
-  const { data, error, count } = await supabase
+  let query = supabase
     .from('brands')
-    .select('*', { count: 'exact' })
-    .order('name', { ascending: true })
-    .range(start, end)
+    .select('*, products(count)', { count: 'exact' })
+
+  if (search) {
+    query = query.or(`name.ilike.%${search}%,slug.ilike.%${search}%`)
+  }
+
+  if (status === 'active') {
+    query = query.eq('is_active', true)
+  } else if (status === 'inactive') {
+    query = query.eq('is_active', false)
+  }
+
+  // Ordenação
+  if (sort === 'newest') {
+    query = query.order('created_at', { ascending: false })
+  } else if (sort === 'updated') {
+    query = query.order('updated_at', { ascending: false }) // se existir updated_at, se não, ignora ou order name
+  } else {
+    query = query.order('name', { ascending: true })
+  }
+
+  const { data, error, count } = await query.range(start, end)
 
   if (error) throw error
-  return { data: data || [], count: count || 0 }
+  return { data: (data as any[]) || [], count: count || 0 }
 }
 
 export async function getAdminBrandById(id: string) {
@@ -61,7 +99,7 @@ export async function getAdminBrandById(id: string) {
     .single()
 
   if (error) throw error
-  return data
+  return data as any
 }
 
 export async function getAdminProducts(page = 1, limit = 50, search?: string) {

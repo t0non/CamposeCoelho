@@ -200,10 +200,12 @@ async function runFullAuthSuite() {
     if (session) {
       const cookieHeader = `sb-${new URL(SUPABASE_URL).hostname.split('.')[0]}-auth-token=${encodeURIComponent(JSON.stringify(session))}`
       
-      // Admin acessando /login -> Proxy deve redirecionar para /admin
       try {
         const resLogin = await fetch(`${SERVER_URL}/login`, {
-          headers: { Cookie: cookieHeader },
+          headers: { 
+            Cookie: cookieHeader,
+            Authorization: `Bearer ${session.access_token}`
+          },
           redirect: 'manual'
         })
         const loc = resLogin.headers.get('location') || ''
@@ -230,7 +232,10 @@ async function runFullAuthSuite() {
       const cookieHeader = `sb-${new URL(SUPABASE_URL).hostname.split('.')[0]}-auth-token=${encodeURIComponent(JSON.stringify(session))}`
       try {
         const resAdmin = await fetch(`${SERVER_URL}/admin`, {
-          headers: { Cookie: cookieHeader },
+          headers: { 
+            Cookie: cookieHeader,
+            Authorization: `Bearer ${session.access_token}`
+          },
           redirect: 'manual'
         })
         const loc = resAdmin.headers.get('location') || ''
@@ -306,7 +311,8 @@ async function runFullAuthSuite() {
 
   // 1. Envio de e-mail de recuperação (Solicitação sem expor existência)
   try {
-    const { error: resetErr } = await publicClient.auth.resetPasswordForEmail('pendente@cliente.com.br', {
+    const testEmail = `pendente+${Date.now()}@cliente.com.br`
+    const { error: resetErr } = await publicClient.auth.resetPasswordForEmail(testEmail, {
       redirectTo: `${SERVER_URL}/api/auth/callback?type=recovery`,
     })
     recordResult(

@@ -89,7 +89,7 @@ async function runTests() {
   for (const route of routes) {
     const res = await fetchRoute(route, admin.session)
     const noSecrets = !res.text.includes(SERVICE_KEY)
-    const noStackTrace = !res.text.includes('Error:')
+    const noStackTrace = !res.text.includes('node_modules') && !res.text.includes('Error:')
     test(`ADMIN: ${route} retorna 200 sem secrets/stacktrace`, res.status === 200 && noSecrets && noStackTrace)
   }
 

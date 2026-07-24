@@ -12,13 +12,20 @@ export async function createCategoryAction(data: any) {
   const parsed = CategoryInputSchema.parse(data)
   const supabase = (await createClient()) as any
 
+  // Checagem proativa amigável
+  const { data: existing } = await supabase.from('categories').select('id').eq('slug', parsed.slug).maybeSingle()
+  if (existing) return { success: false, message: 'Este slug já está em uso por outra categoria.' }
+
   const { data: created, error } = await supabase
     .from('categories')
     .insert(parsed as any)
     .select('id')
     .single()
 
-  if (error) return { success: false, message: error.message }
+  if (error) {
+    if (error.code === '23505') return { success: false, message: 'Este slug já está em uso por outra categoria.' }
+    return { success: false, message: 'Erro ao criar a categoria.' }
+  }
 
   await createAuditLog('CATEGORY_CREATED', 'categories', created.id, parsed)
   invalidateCategoryCache(parsed.slug)
@@ -31,11 +38,29 @@ export async function updateCategoryAction(id: string, data: any) {
   const parsed = CategoryInputSchema.partial().parse(data)
   const supabase = (await createClient()) as any
 
+  if (parsed.slug) {
+    const { data: existing } = await supabase.from('categories').select('id').eq('slug', parsed.slug).neq('id', id).maybeSingle()
+    if (existing) return { success: false, message: 'Este slug já está em uso por outra categoria.' }
+  }
+
+  // Se trocar slug, invalidar antigo
+  const { data: oldCategory } = await supabase.from('categories').select('slug').eq('id', id).single()
+
   const { error } = await supabase.from('categories').update(parsed as any).eq('id', id)
-  if (error) return { success: false, message: error.message }
+  if (error) {
+    if (error.code === '23505') return { success: false, message: 'Este slug já está em uso por outra categoria.' }
+    return { success: false, message: 'Erro ao atualizar a categoria.' }
+  }
 
   await createAuditLog('CATEGORY_UPDATED', 'categories', id, parsed)
-  invalidateCategoryCache(parsed.slug)
+  if (oldCategory?.slug && oldCategory.slug !== parsed.slug) {
+    invalidateCategoryCache(oldCategory.slug)
+  }
+  if (parsed.slug) {
+    invalidateCategoryCache(parsed.slug)
+  } else {
+    invalidateCategoryCache() // Caso não altere slug, ao menos revalida a listagem geral
+  }
 
   return { success: true }
 }
@@ -59,8 +84,15 @@ export async function createBrandAction(data: any) {
   const parsed = BrandInputSchema.parse(data)
   const supabase = (await createClient()) as any
 
+  // Checagem proativa amigável
+  const { data: existing } = await supabase.from('brands').select('id').eq('slug', parsed.slug).maybeSingle()
+  if (existing) return { success: false, message: 'Este slug já está em uso por outra marca.' }
+
   const { data: created, error } = await supabase.from('brands').insert(parsed as any).select('id').single()
-  if (error) return { success: false, message: error.message }
+  if (error) {
+    if (error.code === '23505') return { success: false, message: 'Este slug já está em uso por outra marca.' }
+    return { success: false, message: 'Erro ao criar a marca.' }
+  }
 
   await createAuditLog('BRAND_CREATED', 'brands', created.id, parsed)
   invalidateBrandCache(parsed.slug)
@@ -72,11 +104,29 @@ export async function updateBrandAction(id: string, data: any) {
   const parsed = BrandInputSchema.partial().parse(data)
   const supabase = (await createClient()) as any
 
+  if (parsed.slug) {
+    const { data: existing } = await supabase.from('brands').select('id').eq('slug', parsed.slug).neq('id', id).maybeSingle()
+    if (existing) return { success: false, message: 'Este slug já está em uso por outra marca.' }
+  }
+
+  const { data: oldBrand } = await supabase.from('brands').select('slug').eq('id', id).single()
+
   const { error } = await supabase.from('brands').update(parsed as any).eq('id', id)
-  if (error) return { success: false, message: error.message }
+  if (error) {
+    if (error.code === '23505') return { success: false, message: 'Este slug já está em uso por outra marca.' }
+    return { success: false, message: 'Erro ao atualizar a marca.' }
+  }
 
   await createAuditLog('BRAND_UPDATED', 'brands', id, parsed)
-  invalidateBrandCache(parsed.slug)
+  if (oldBrand?.slug && oldBrand.slug !== parsed.slug) {
+    invalidateBrandCache(oldBrand.slug)
+  }
+  if (parsed.slug) {
+    invalidateBrandCache(parsed.slug)
+  } else {
+    invalidateBrandCache()
+  }
+
   return { success: true }
 }
 
