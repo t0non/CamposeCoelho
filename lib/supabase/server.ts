@@ -1,5 +1,5 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import type { Database } from '@/types/database.types'
 import { createAdminClient } from './admin'
 
@@ -9,6 +9,7 @@ import { createAdminClient } from './admin'
  */
 export async function createClient() {
   const cookieStore = await cookies()
+  const headerStore = await headers()
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
   const supabaseAnonKey =
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
@@ -20,16 +21,30 @@ export async function createClient() {
     {
       cookies: {
         getAll() {
-          return cookieStore.getAll()
+          const allCookies = cookieStore.getAll()
+          const authHeader = headerStore.get('authorization')
+          if (authHeader && authHeader.startsWith('Bearer ')) {
+            const token = authHeader.replace('Bearer ', '')
+            const cookieName = `sb-${new URL(supabaseUrl).hostname.split('.')[0]}-auth-token.0`
+            const sessionStr = JSON.stringify([token, '', null, null, null])
+            const b64 = Buffer.from(sessionStr).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+            allCookies.push({ name: cookieName, value: b64 })
+          }
+          return allCookies
         },
         setAll(cookiesToSet: Array<{ name: string; value: string; options: CookieOptions }>) {
           try {
             cookiesToSet.forEach(({ name, value, options }) => {
               cookieStore.set(name, value, options)
             })
-          } catch {
-            // setAll é chamado em Server Components — ignorar quando read-only
+          } catch (error) {
+            // Pode falhar em Server Components, mas ignoramos em leitura segura
           }
+        },
+      },
+      global: {
+        headers: {
+          Authorization: headerStore.get('authorization') ?? '',
         },
       },
     },

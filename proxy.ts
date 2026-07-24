@@ -101,9 +101,15 @@ export async function proxy(request: NextRequest) {
   const response = NextResponse.next({ request })
   const supabase = createProxyClient(request, response)
 
-  const {
+  let {
     data: { user },
   } = await supabase.auth.getUser()
+
+  if (!user && request.headers.get('authorization')?.startsWith('Bearer ')) {
+    const token = request.headers.get('authorization')!.replace('Bearer ', '')
+    const { data } = await supabase.auth.getUser(token)
+    user = data.user
+  }
 
   const { pathname } = request.nextUrl
 

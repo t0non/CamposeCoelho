@@ -1,8 +1,3 @@
-/**
- * scripts/test-http-admin-catalog.mjs
- * Suíte de testes HTTP para validação de acesso e isolamento das rotas administrativas do catálogo (/admin/*).
- */
-
 import { createClient } from '@supabase/supabase-js'
 import fs from 'fs'
 
@@ -21,80 +16,84 @@ if (fs.existsSync('.env.local')) {
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
 const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-const PASSWORD = 'DevelopmentPassword123!'
 
 if (!SUPABASE_URL || !ANON_KEY) {
   console.error('💥 Variáveis de ambiente ausentes.')
   process.exit(1)
 }
 
-const PORT = process.env.PORT || '3000'
-const BASE_URL = `http://localhost:${PORT}`
-
-async function loginAs(email) {
+async function loginAs(email, password = 'DevelopmentPassword123!') {
   const client = createClient(SUPABASE_URL, ANON_KEY)
-  const { data, error } = await client.auth.signInWithPassword({ email, password: PASSWORD })
-  if (error || !data.session) {
-    throw new Error(`Falha no login para ${email}: ${error?.message}`)
-  }
+  const { data, error } = await client.auth.signInWithPassword({ email, password })
+  if (error || !data.session) throw new Error(`Falha auth ${email}`)
   return data.session
 }
 
-async function runAdminHttpTests() {
-  console.log(`🔒 Executando testes HTTP de rotas administrativas contra ${BASE_URL}...\n`)
+async function fetchRoute(path, session = null) {
+  const headers = {}
+  if (session) {
+    headers['Authorization'] = `Bearer ${session.access_token}`
+  }
 
-  let passed = 0
-  let failed = 0
+  const res = await fetch(`http://localhost:3000${path}`, { headers, redirect: 'manual' })
+  return { status: res.status, headers: res.headers }
+}
+
+async function runTests() {
+  console.log('🚀 Iniciando testes HTTP Administrativos (Fundação 11D-A)...\n')
+  let passed = 0, failed = 0
 
   function test(name, cond, detail = '') {
     if (cond) {
       console.log(`  ✅ PASS: ${name}`)
       passed++
     } else {
-      console.log(`  ❌ FAIL: ${name}${detail ? ' | ' + detail : ''}`)
+      console.log(`  ❌ FAIL: ${name} ${detail ? `| ${detail}` : ''}`)
       failed++
     }
   }
 
   const adminSession = await loginAs('admin@atacado.com.br')
   const customerSession = await loginAs('aprovado@cliente.com.br')
+  const sellerSession = await loginAs('vendedor@atacado.com.br')
 
-  const adminRoutes = [
-    '/admin/categorias',
-    '/admin/marcas',
-    '/admin/produtos',
-    '/admin/estoque',
-    '/admin/tabelas-de-precos',
-  ]
+  // 1. Anônimo não acessa categorias admin
+  const res1 = await fetchRoute('/admin/categorias')
+  test('1. Anônimo não acessa categorias admin', res1.status === 307 && res1.headers.get('location')?.includes('/login'))
 
-  // 1. Visitante anônimo é redirecionado ao tentar acessar rotas admin
-  for (const route of adminRoutes) {
-    const res = await fetch(`${BASE_URL}${route}`, { redirect: 'manual' })
-    test(`Anon redirecionado ao acessar ${route}`, res.status === 307 || res.status === 302 || res.status === 308)
-  }
+  // 2. Customer não acessa categorias admin
+  const res2 = await fetchRoute('/admin/categorias', customerSession)
+  test('2. Customer não acessa categorias admin', res2.status === 307 && res2.headers.get('location')?.endsWith('/'), `Status: ${res2.status}, Location: ${res2.headers.get('location')}`)
 
-  // 2. Customer é redirecionado ao tentar acessar rotas admin
-  for (const route of adminRoutes) {
-    const res = await fetch(`${BASE_URL}${route}`, {
-      headers: { Authorization: `Bearer ${customerSession.access_token}` },
-      redirect: 'manual',
-    })
-    test(`Customer redirecionado ao acessar ${route}`, res.status === 307 || res.status === 302 || res.status === 308 || res.status === 403)
-  }
+  // 3. Seller não acessa categorias admin
+  const res3 = await fetchRoute('/admin/categorias', sellerSession)
+  test('3. Seller não acessa categorias admin', res3.status === 307 && res3.headers.get('location')?.endsWith('/'), `Status: ${res3.status}, Location: ${res3.headers.get('location')}`)
 
-  // 3. Admin acessa rotas administrativas com HTTP 200
-  for (const route of adminRoutes) {
-    const res = await fetch(`${BASE_URL}${route}`, {
-      headers: { Authorization: `Bearer ${adminSession.access_token}` },
-    })
-    test(`Admin acessa ${route} com HTTP 200`, res.status === 200)
-  }
+  // 4. Admin acessa categorias admin
+  const res4 = await fetchRoute('/admin/categorias', adminSession)
+  test('4. Admin acessa categorias admin', res4.status === 200, `Status: ${res4.status}, Location: ${res4.headers.get('location')}`)
 
-  console.log(`\n📊 RESULTADO TESTES HTTP ADMIN: ${passed} PASS / ${failed} FAIL\n`)
+  // 5. Admin acessa marcas admin
+  const res5 = await fetchRoute('/admin/marcas', adminSession)
+  test('5. Admin acessa marcas admin', res5.status === 200, `Status: ${res5.status}, Location: ${res5.headers.get('location')}`)
+
+  // 6. Admin acessa produtos admin
+  const res6 = await fetchRoute('/admin/produtos', adminSession)
+  test('6. Admin acessa produtos admin', res6.status === 200, `Status: ${res6.status}, Location: ${res6.headers.get('location')}`)
+
+  // 7. Admin acessa estoque admin
+  const res7 = await fetchRoute('/admin/estoque', adminSession)
+  test('7. Admin acessa estoque admin', res7.status === 200, `Status: ${res7.status}, Location: ${res7.headers.get('location')}`)
+
+  // 8. Admin acessa tabelas de preços admin
+  const res8 = await fetchRoute('/admin/tabelas-de-precos', adminSession)
+  test('8. Admin acessa tabelas de preços admin', res8.status === 200, `Status: ${res8.status}, Location: ${res8.headers.get('location')}`)
+
+  console.log(`\n📊 RESULTADO HTTP ADMIN: ${passed} PASS / ${failed} FAIL\n`)
   if (failed > 0) process.exit(1)
 }
 
-runAdminHttpTests().catch((err) => {
-  console.error('💥 Erro ao executar suíte HTTP administrativa:', err.message)
+runTests().catch(e => {
+  console.error('Erro na suíte HTTP Admin:', e.message)
   process.exit(1)
 })

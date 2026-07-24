@@ -32,6 +32,11 @@ export function createProxyClient(
           )
         },
       },
+      global: {
+        headers: {
+          Authorization: request.headers.get('authorization') ?? '',
+        },
+      },
     },
   )
 }

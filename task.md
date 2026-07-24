@@ -1,0 +1,25 @@
+- `[ ]` 1. Auditoria e Migração de `admin-catalog.ts`
+  - `[ ]` Mapear consumidores de `app/actions/admin-catalog.ts`
+  - `[ ]` Criar `app/actions/catalog.ts`, `app/actions/inventory.ts`, `app/actions/pricing.ts`
+  - `[ ]` Remover `admin-catalog.ts` (ou manter wrapper de compatibilidade até limpar tudo)
+- `[ ]` 2. Reutilizar Autorização Existente
+  - `[ ]` Auditar `lib/auth` e consolidar `requireAdmin` (único módulo server-only)
+- `[ ]` 3. Auditoria Factual da RPC de Estoque
+  - `[ ]` Extrair assinatura completa e verificar transacionalidade / audit logs internos
+  - `[ ]` Corrigir a RPC se necessário, removendo logs duplicados nas Actions
+- `[ ]` 4. Sistema de Auditoria sem Duplicidade
+  - `[ ]` Helper centralizado para `createAuditLog` restrito (allowlist)
+- `[ ]` 5. Invalidação de Cache (Next.js 16)
+  - `[ ]` Helper granular usando `revalidatePath(path, 'page')` e `revalidateTag(tag, 'max')`
+- `[ ]` 6. Server Actions Base e Zod
+  - `[ ]` Criar Schemas Zod (`CategoryInput`, etc)
+  - `[ ]` Validar Actions e retornar objetos tipados, testáveis em camada de serviço
+- `[ ]` 7. Camada de Dados
+  - `[ ]` Criar `lib/data/admin-catalog.ts` com verificações de autorização
+- `[ ]` 8. Escopo das Rotas (Placeholders Funcionais)
+  - `[ ]` Criar layouts para categorias, marcas, produtos, estoque, tabelas
+- `[ ]` 9. Testes Mínimos 11D-A
+  - `[ ]` Implementar os 20 cenários exigidos em HTTP e Action context
+- `[ ]` 10. Regressão e Checkpoint
+  - `[ ]` Type-check, build, supabase migrations sync
+  - `[ ]` Relatório Final do 11D-A
