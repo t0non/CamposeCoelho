@@ -1,7 +1,14 @@
-import { requireAdmin } from '@/lib/supabase/auth'
+import { PriceTableForm } from '@/components/admin/PriceTableForm'
 
-export const metadata = { title: 'Admin — tabelas-de-precos / nova' }
-export default async function Page() {
-  await requireAdmin()
-  return <div className="space-y-4"><h1 className="text-2xl font-bold">tabelas-de-precos / nova</h1><p>Placeholder estrutural.</p></div>
+export default function NewPriceTablePage() {
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight text-slate-800">Nova Tabela de Preços</h1>
+        <p className="text-slate-500 text-sm">Preencha os dados básicos para criar um novo canal de vendas com regras de vigência.</p>
+      </div>
+
+      <PriceTableForm />
+    </div>
+  )
 }

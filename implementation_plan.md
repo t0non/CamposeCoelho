@@ -1,88 +1,127 @@
-# Implementação do BLOCO 11D-C: Produtos, Variantes e Imagens
-
-Este plano detalha a implementação das interfaces e da lógica administrativa para Produtos, Variantes e Imagens (BLOCO 11D-C), partindo do baseline exato exigido (`2d9b13e`), com 50/50 PASS em Admin Catalog e integrações validadas. Nenhuma exclusão física ou gerenciamento de estoque explícito será inserido neste bloco.
+# Plano de Implementação Final: BLOCO 11D-D — ESTOQUE, MOVIMENTAÇÕES E TABELAS DE PREÇOS
 
 ---
 
-## User Review Required
+## 1. Classificação dos Arquivos
 
-> [!WARNING]
-> Este plano propõe o upload de imagens de produto utilizando validação de *magic bytes* via Server Action. Como o limite nativo do Next.js App Router para bodies JSON/FormData em Server Actions é 1 MB, optaremos pela **Estratégia B (Route Handler autenticado)** para viabilizar os 5 MB do bucket, protegendo contra CSRF e validando Sessão, Product ID, Mime e Limite de Corpo estritamente, retornando JSON seguro para a UI.
-> O Sr. aprova a adoção da Estratégia B (Route Handler) para o Upload?
-
-> [!CAUTION]
-> As ações de "Tornar Principal" e "Reordenar Imagens" serão realizadas via **RPC Transacional** no Supabase, garantindo atomicidade total sem múltiplos acessos round-trip e gerando exatamente 1 log por operação de negócio.
+| Arquivo | Classificação | Conteúdo Atual & Raciocínio de Modificação |
+| :--- | :--- | :--- |
+| `app/actions/inventory.ts` | **MODIFY** | **Existente**. Contém `adjustInventoryAction`. Será modificado para chamar exclusivamente a nova RPC `adjust_inventory_manual_atomic` para ajustes manuais, remover o uso de inputs arbitrários de referências e invalidar caches. |
+| `app/actions/pricing.ts` | **MODIFY** | **Existente**. Contém Server Actions de tabela e preços. Será modificado para remover manipulações de status na mesma action de edição, chamar exclusivamente as novas RPCs segregadas (`update_price_table_atomic`, `set_price_table_status_atomic`, `upsert_price_entry_atomic`, `set_price_entry_status_atomic`) e processar valores monetários via parser centralizado. |
+| `lib/data/admin-catalog.ts` | **MODIFY** | **Existente**. Possui as queries básicas de listagem. Será modificado para incluir paginação, buscas avançadas, ordenação e listagem do histórico imutável sem N+1. |
+| `lib/validations/admin-catalog.ts` | **MODIFY** | **Existente**. Será modificado para remover `is_active` das validações de edição, endurecer a validação decimal e garantir que a promoção seja estritamente menor que o preço base. |
+| `lib/utils/cache.ts` | **MODIFY** | **Existente**. Centraliza as invalidações do catálogo e tabelas de preços. |
+| `lib/utils/audit.ts` | **MODIFY** | **Existente**. Contém a lista de tipos de auditoria. Será atualizado para remover `PRICE_TABLE_PRODUCT_UPSERTED` das novas operações e incluir a convenção única: `PRICE_ENTRY_CREATED`, `PRICE_ENTRY_UPDATED`, `PRICE_ENTRY_DEACTIVATED` e `PRICE_ENTRY_REACTIVATED` (observando que o tipo antigo permanece apenas para registros anteriores). |
+| `app/(admin)/admin/estoque/page.tsx` | **MODIFY** | Substituir o placeholder pela listagem e controle completo de estoque e movimentações. |
+| `app/(admin)/admin/tabelas-de-precos/page.tsx` | **MODIFY** | Substituir o placeholder pela listagem de tabelas de preços. |
+| `app/(admin)/admin/tabelas-de-precos/nova/page.tsx` | **MODIFY** | Substituir o placeholder pelo formulário de criação de tabela. |
+| `app/(admin)/admin/tabelas-de-precos/[id]/page.tsx` | **MODIFY** | Substituir pelo painel de detalhes, gerenciamento de preços por variante e controle de status. |
+| `components/admin/InventoryTable.tsx` | **NEW** | Componente de exibição da listagem de inventário. |
+| `components/admin/InventoryAdjustmentModal.tsx` | **NEW** | Modal de ajuste manual com cálculo de saldo previsto. |
+| `components/admin/InventoryHistoryModal.tsx` | **NEW** | Modal de histórico de movimentações imutáveis. |
+| `components/admin/PriceTableForm.tsx` | **NEW** | Formulário de tabela de preços (excluindo `is_default` e `is_active`). |
+| `components/admin/PriceEntriesTable.tsx` | **NEW** | Componente de precificação de variantes e produtos. |
+| `lib/utils/money-parser.ts` | **NEW** | Função pura centralizada de parser monetário pt-BR seguro. |
 
 ---
 
-## Open Questions
+## 2. Auditoria Factual de Dados Existentes
 
-Nenhuma no momento. O detalhamento prévio foi excelente.
+* **Resultado da Consulta**: Foram encontrados **0 registros** na tabela `public.price_table_products` com `promotional_price = unit_price`.
+* **Decisão**: A migration de endurecimento da restrição comercial (`<`) pode ser aplicada com segurança.
 
 ---
 
-## Proposed Changes
+## 3. Estrutura do Banco de Dados e Constraints de Coerência
 
-### 1. Auditoria dos Arquivos Existentes
-Conforme orientação, avaliamos os arquivos existentes sob o prisma de **MODIFY**:
-- **MODIFY** `app/(admin)/admin/produtos/page.tsx`: Existente como placeholder. Receberá listagem completa com Table, paginação, filtros e buscas (ilike).
-- **MODIFY** `app/(admin)/admin/produtos/novo/page.tsx`: Existente como placeholder. Renderizará formulário base com validações Zod.
-- **MODIFY** `app/(admin)/admin/produtos/[id]/page.tsx`: Existente como placeholder. Usará `await params` (Next 16) e estruturará abas virtuais (Geral, Variantes, Imagens). Retornará `notFound()` caso UUID malformado/inexistente.
-- **MODIFY** `app/actions/catalog.ts`: Será preservado focado em produtos e variantes (criação, edição, publicação, ativação). Não transformaremos em monólito.
-- **MODIFY** `next.config.ts`: Será atualizado APENAS caso necessite configurar limites da estratégia adotada ou hostname de imagens públicas.
-- Componentes Base (`AdminPageHeader`, `Table`, `StatusBadge`, `SubmitButton`, `ConfirmStatusDialog`) serão totalmente **reutilizados**.
+Criaremos uma nova migration `supabase/migrations/20260727220000_price_constraints_and_rpcs.sql`:
+1. Substituir a constraint `price_table_products_promo_lte_unit` por `price_table_products_promo_lt_unit` (`promotional_price < unit_price`).
+2. Adicionar check de coerência em `price_tables`:
+   `starts_at IS NULL OR ends_at IS NULL OR ends_at > starts_at`
+3. Adicionar check de coerência em `price_table_products`:
+   `promotion_starts_at IS NULL OR promotion_ends_at IS NULL OR promotion_ends_at > promotion_starts_at`
 
-### 2. Schema e Banco de Dados (PostgreSQL / Storage)
-- **products**: Possui `id`, `name`, `slug`, `sku`, `category_id`, `brand_id`, `is_active`, `is_published`, `min_quantity` (>0), `multiple_quantity` (>0), SEO, Descrições.
-- **product_variants**: Possui `product_id`, `name`, `sku`, `attributes` (jsonb), `barcode`, `is_active`, `min_quantity`, `multiple_quantity`.
-- **product_images**: Possui `product_id`, `url`, `alt_text`, `position` (>=0), `is_primary`.
-- **Storage (`product-images`)**: Bucket PÚBLICO para leitura. Limite de 5MB. Mimes: jpeg, png, webp. Inserções/Atualizações bloqueadas por RLS explícito (is_admin()).
+---
 
-*O comportamento público é claro*: Sem Variante ativa = Sem preço (fallback "Valor Indisponível"). Rascunho = `404 Not Found` (bloqueado na raiz do RLS). Imagem principal não impede publicação, a menos que definamos estritamente (Validaremos dinamicamente).
+## 4. Endurecimento de `adjust_inventory_atomic` e Wrapper Manual
 
-### 3. Arquitetura das Actions
-- **MODIFY** `app/actions/catalog.ts`: Centralizará as operações CRUD base. Incorporando `'use server'`.
-  - `createProductAction`, `updateProductAction`, `publishProductAction`, `unpublishProductAction`, `toggleProductStatusAction`.
-  - `createVariantAction`, `updateVariantAction`, `toggleVariantStatusAction`.
-- **NEW** `app/actions/product-images.ts`: Módulo isolado `use server` exclusivo para imagens.
-  - `updateImageAltTextAction`, `removeProductImageAction`.
-- Apenas 1 (um) Audit Log imutável e transacional via DB por operação aprovada (Zero logs para constraints e rejects).
+1. **Hardened `adjust_inventory_atomic`**:
+   * Substituiremos a função definindo `SET search_path = ''` e qualificando todas as tabelas e funções internas.
+2. **Nova RPC `adjust_inventory_manual_atomic`**:
+   * Assinatura: `public.adjust_inventory_manual_atomic(p_inventory_id uuid, p_quantity_delta integer, p_movement_type text, p_reason text)`
+   * Valida se `p_movement_type` é: `'adjustment'` (com delta positivo/negativo) ou `'return'` (com delta estritamente positivo). Bloqueia qualquer outro tipo.
+   * Define internamente `reference_type = 'manual'` e `reference_id = NULL`.
+   * Invoca a lógica interna qualificada de `adjust_inventory_atomic`.
+   * `SECURITY DEFINER`, `SET search_path = ''`, grants restritos a `authenticated` (revogado de PUBLIC/anon).
 
-### 4. Gestão de Imagens e Atomicidade (Route Handler)
-- **NEW** `app/api/admin/images/upload/route.ts`: Handler restrito para recebimento do arquivo de até 5MB. Inspeciona Magic Bytes no Buffer, checa Auth (Admin), move o Buffer via `@supabase/supabase-js` autenticado e insere no DB com transação / rollback na própria pipeline (se DB falhar, aciona `.remove()` no Storage de forma explícita).
-- **NEW** `supabase/migrations/[...]`: Migration contendo **RPCs** para gerenciamento seguro:
-  - `set_primary_image(image_id, product_id)`: Limpa a flag anterior e marca a nova gerando audit_log.
-  - `reorder_images(json_payload)`: Reordena as posições dentro de uma transação.
+---
 
-### 5. Formulários, Listagens e Componentes
-- **Listagem de Produtos**: Receberá queries unificadas com busca em `name`, `sku`, `slug` via `ilike` sem N+1. Paginação Server-side controlada via searchParams.
-- **Criação de Produto**: Criará como rascunho por padrão. Validação de slug/sku duplicados barrados já via Zod e DB.
-- **Edição ([id])**: Carrega as sessões "Geral, SEO, Variantes, Imagens". Em slug novo: revalidações disparam invalidação (404 no slug antigo).
+## 5. RPCs Transacionais de Preços (Segregação de Edição e Status)
 
-### 6. Validação e Invalidação (Cache)
-- Cache Updates via `revalidatePath('/catalogo')`, `revalidatePath('/busca')`, `revalidatePath('/')`, `revalidatePath('/admin/produtos')`.
-- Rota legada de slug recebe `revalidatePath('/produto/' + oldSlug, 'page')` explícito sem criar mocks de redirecionamento.
+Implementaremos RPCs com `SECURITY DEFINER`, `SET search_path = ''` e privilégios de execução restritos a `authenticated`:
 
-### 7. Expansão de Regressões e Testes
-Serão orquestrados **pelo menos 25 testes adicionais**:
-- `scripts/test-admin-catalog.mjs`: Testes automatizados em NodeJS simulando Client Admin (sem API pública extra) para validar Produtos, Variantes (Edição cruzada, limites JSON) e Imagens (Validações de Magic Bytes e RPC Transacional). Ao fim, alcançará *75 PASS / 0 FAIL*.
-- `scripts/test-http-admin-catalog.mjs`: Validação HTTP real autenticada nos novos endpoints REST e Views.
+1. `public.create_price_table_atomic(p_name text, p_description text, p_starts_at timestamptz, p_ends_at timestamptz)`
+   * Insere em `public.price_tables` com `is_default = false` e `is_active = true`.
+   * Grava 1 audit log `PRICE_TABLE_CREATED`.
+2. `public.update_price_table_atomic(p_id uuid, p_name text, p_description text, p_starts_at timestamptz, p_ends_at timestamptz)`
+   * Atualiza apenas `name`, `description`, `starts_at`, `ends_at` em `public.price_tables` (preserva `is_default` e `is_active`).
+   * Grava 1 audit log `PRICE_TABLE_UPDATED`.
+3. `public.set_price_table_status_atomic(p_id uuid, p_is_active boolean)`
+   * Altera status `is_active`.
+   * Grava `PRICE_TABLE_DEACTIVATED` ou `PRICE_TABLE_REACTIVATED`.
+4. `public.upsert_price_entry_atomic(p_price_table_id uuid, p_product_id uuid, p_variant_id uuid, p_unit_price numeric, p_promotional_price numeric, p_promotion_starts_at timestamptz, p_promotion_ends_at timestamptz)`
+   * Seleciona e bloqueia a linha correspondente com `SELECT id, is_active FROM public.price_table_products WHERE price_table_id = p_price_table_id AND product_id = p_product_id AND variant_id IS NOT DISTINCT FROM p_variant_id FOR UPDATE`.
+   * **Se existir**:
+     * Atualiza os valores mantendo `is_active` inalterado.
+     * Grava 1 audit log `PRICE_ENTRY_UPDATED`.
+   * **Se não existir**:
+     * Insere nova entrada com `is_active = true`.
+     * Grava 1 audit log `PRICE_ENTRY_CREATED`.
+5. `public.set_price_entry_status_atomic(p_id uuid, p_is_active boolean)`
+   * Altera status `is_active` da entrada.
+   * Grava `PRICE_ENTRY_DEACTIVATED` ou `PRICE_ENTRY_REACTIVATED`.
 
-## Verification Plan
+---
 
-### Testes Manuais
-A aprovação desta branch culminará numa sessão de validação local comprovando a navegação nos endpoints desenvolvidos:
-1. Navegar por listagens paginadas responsivas;
-2. Enviar JPEGs validados via *Magic Bytes* (bloqueando corrompidos);
-3. Reordenar imagens comprovando a Action Atômica RPC;
-4. Alternar a variante de um produto, ativando/desativando;
-5. Validar deleção e compensação (Storage x DB).
+## 6. Parser Monetário Centralizado Seguro
 
-### Testes Automatizados (Regressão Final)
-O ciclo fechará com os comandos no Windows:
-- `node scripts/test-admin-catalog.mjs` (75 PASS)
-- `node scripts/test-http-admin-catalog.mjs` (Cobertura atualizada)
-- Demais testes com 100% de integridade confirmada.
-- `npm.cmd run type-check` (0 errors)
-- `npm.cmd run build` (Sucesso Turbopack)
-- `npx.cmd supabase migration list` (Sincronização atestada)
+Lógica da função `parseBrazilianMoney(value: string): string`:
+1. Remover prefixo `"R$"` e espaços.
+2. Validar contra o formato `pt-BR` original (`/^\d{1,3}(\.\d{3})*,\d{2}$/` ou `/^\d+,\d{2}$/`). Se falhar, rejeita (lança erro).
+3. Remover pontos de milhar.
+4. Substituir a vírgula decimal por ponto.
+5. Validar regex canônico final (`/^\d+\.\d{2}$/`) rejeitando NaN, Infinity, valores negativos ou notação científica.
+6. Retorna a string canônica (ex: `"1234.56"`).
+
+---
+
+## 7. Regras de Precedência e Isolamento
+* **Default Price Table**: `is_default` excluído da allowlist de formulários. Novas tabelas recebem `is_default = false`.
+* **Precedência**: 1. Variante específica ➔ 2. Produto (variant_id IS NULL) ➔ 3. Min quantidade ➔ 4. Vigência da tabela e promoção.
+* Empresa sem price_table_id exibe "Valor indisponível" sem fallbacks globais ou transversais.
+
+---
+
+## 8. Plano de Testes de Concorrência e Rollback
+
+* **Estoque**: Executar dois ajustes simultâneos no mesmo ID no script de testes. Graças ao `FOR UPDATE`, as transações serão serializadas, resultando em saldo final exato, 2 movements e 2 audit logs individuais.
+* **Preço**: Executar dois upserts simultâneos para a mesma combinação tabela/variante. A constraint de unicidade e o `FOR UPDATE` prevenirão duplicações, gerando apenas a entrada atualizada.
+* **Rollback**: Testar falhas enviando valores com promoção maior que o preço normal ou ajustando estoque abaixo do reservado. Validar que nenhuma mutação parcial permanece no banco de dados e que exatamente zero audit logs são gerados.
+
+---
+
+## 9. Testes Manuais Focados (Apenas em Navegador Real)
+
+Os testes manuais serão executados em navegador real, com interação real na interface, cobrindo fluxos de ajuste manual, criação de tabelas, vigências de preços/promoções, e isolamento de preços, registrando viewport, rota, ação executada, resultado visual/banco, problema e correção.
+
+---
+
+## 10. Regressão Final Obrigatória
+
+* `node scripts/test-admin-catalog.mjs` (Mínimo de 145 PASS)
+* `node scripts/test-http-admin-catalog.mjs` (Mínimo superior a 53 PASS)
+* `node scripts/test-route-handler-images.mjs` (35/35 PASS)
+* `node scripts/test-rls.mjs` (8/8 PASS)
+* `npm.cmd run type-check`
+* `npm.cmd run build`
+* `npx.cmd supabase migration list`

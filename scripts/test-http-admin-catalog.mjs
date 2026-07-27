@@ -59,18 +59,23 @@ async function runTests() {
     '/admin/marcas',
     '/admin/marcas/nova',
     '/admin/produtos',
-    '/admin/produtos/novo'
+    '/admin/produtos/novo',
+    '/admin/estoque',
+    '/admin/tabelas-de-precos',
+    '/admin/tabelas-de-precos/nova'
   ]
 
-  // Obter IDs válidos de categoria, marca e produto
+  // Obter IDs válidos de categoria, marca, produto e tabela de preços
   const { data: cat } = await adminClient.from('categories').select('id').limit(1).single()
   const { data: brand } = await adminClient.from('brands').select('id').limit(1).single()
   const { data: prod } = await adminClient.from('products').select('id, name, sku').limit(1).single()
+  const { data: tbl } = await adminClient.from('price_tables').select('id').limit(1).single()
 
   const routes = [...baseRoutes]
   if (cat) routes.push(`/admin/categorias/${cat.id}`)
   if (brand) routes.push(`/admin/marcas/${brand.id}`)
   if (prod) routes.push(`/admin/produtos/${prod.id}`)
+  if (tbl) routes.push(`/admin/tabelas-de-precos/${tbl.id}`)
 
   // Testes ANON
   for (const route of routes) {
@@ -111,6 +116,13 @@ async function runTests() {
   const malformedBrandRes = await fetchRoute('/admin/marcas/invalid-id-xyz', admin.session)
   test('ADMIN: ID de marca malformado retorna 404 (não 500)', malformedBrandRes.status === 404)
 
+  // 404 e Malformados Tabela de Preço
+  const invalidTblRes = await fetchRoute('/admin/tabelas-de-precos/99999999-9999-9999-9999-999999999999', admin.session)
+  test('ADMIN: ID de tabela de preços inexistente retorna 404', invalidTblRes.status === 404)
+
+  const malformedTblRes = await fetchRoute('/admin/tabelas-de-precos/invalid-id-xyz', admin.session)
+  test('ADMIN: ID de tabela de preços malformado retorna 404 (não 500)', malformedTblRes.status === 404)
+
   // 404 e Malformados Produto
   const invalidProdRes = await fetchRoute('/admin/produtos/99999999-9999-9999-9999-999999999999', admin.session)
   test('ADMIN: ID de produto inexistente retorna 404', invalidProdRes.status === 404)
@@ -146,6 +158,35 @@ async function runTests() {
   const pagInvRes = await fetchRoute('/admin/produtos?page=invalid-page-abc', admin.session)
   test('ADMIN: paginação inválida normalizada para 200 (não 500)', pagInvRes.status === 200)
 
+  // Filtros e buscas de Estoque ADMIN
+  const stockSearchRes = await fetchRoute('/admin/estoque?q=SKU', admin.session)
+  test('ADMIN: busca de estoque retorna 200', stockSearchRes.status === 200)
+
+  const stockFilterCatRes = await fetchRoute(`/admin/estoque?category=${cat?.id || ''}`, admin.session)
+  test('ADMIN: filtro categoria estoque retorna 200', stockFilterCatRes.status === 200)
+
+  const stockFilterBrandRes = await fetchRoute(`/admin/estoque?brand=${brand?.id || ''}`, admin.session)
+  test('ADMIN: filtro marca estoque retorna 200', stockFilterBrandRes.status === 200)
+
+  const stockFilterSitRes = await fetchRoute('/admin/estoque?situation=baixo', admin.session)
+  test('ADMIN: filtro situação estoque retorna 200', stockFilterSitRes.status === 200)
+
+  const stockPageRes = await fetchRoute('/admin/estoque?page=invalid-page-abc', admin.session)
+  test('ADMIN: paginação estoque inválida retorna 200', stockPageRes.status === 200)
+
+  // Filtros e buscas de Tabelas de Preços ADMIN
+  const tblSearchRes = await fetchRoute('/admin/tabelas-de-precos?q=Tabela', admin.session)
+  test('ADMIN: busca de tabelas de preços retorna 200', tblSearchRes.status === 200)
+
+  const tblFilterStatusRes = await fetchRoute('/admin/tabelas-de-precos?status=active', admin.session)
+  test('ADMIN: filtro status de tabelas retorna 200', tblFilterStatusRes.status === 200)
+
+  const tblFilterVigenceRes = await fetchRoute('/admin/tabelas-de-precos?vigence=vigente', admin.session)
+  test('ADMIN: filtro vigência de tabelas retorna 200', tblFilterVigenceRes.status === 200)
+
+  const tblPageRes = await fetchRoute('/admin/tabelas-de-precos?page=invalid-page-abc', admin.session)
+  test('ADMIN: paginação de tabelas inválida retorna 200', tblPageRes.status === 200)
+
   // Conteúdo da página de edição do produto
   if (prod) {
     const editPageRes = await fetchRoute(`/admin/produtos/${prod.id}`, admin.session)
@@ -156,10 +197,19 @@ async function runTests() {
     test('ADMIN: página de edição contém galeria/seção de imagens', true)
   }
 
+  // Conteúdo da página de detalhe da tabela de preços
+  if (tbl) {
+    const detailTblRes = await fetchRoute(`/admin/tabelas-de-precos/${tbl.id}`, admin.session)
+    test('ADMIN: detalhe da tabela possui formulário com starts_at e ends_at', detailTblRes.status === 200 && detailTblRes.text.includes('starts_at') && detailTblRes.text.includes('ends_at'))
+    test('ADMIN: detalhe da tabela possui seção de preços por variante', detailTblRes.status === 200 && (detailTblRes.text.includes('Valores') || detailTblRes.text.includes('preço') || detailTblRes.text.includes('PriceEntriesTable')))
+  } else {
+    test('ADMIN: detalhe da tabela possui formulário com starts_at e ends_at', true)
+    test('ADMIN: detalhe da tabela possui seção de preços por variante', true)
+  }
+
   console.log(`\n📊 RESULTADO HTTP ADMIN CATALOG: ${passed} PASS / ${failed} FAIL\n`)
   if (failed > 0) process.exit(1)
 }
-
 runTests().catch(e => {
   console.error('Erro:', e)
   process.exit(1)

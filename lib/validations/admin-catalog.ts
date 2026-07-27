@@ -64,12 +64,10 @@ export const InventoryAdjustmentInputSchema = z.object({
 })
 
 export const PriceTableBaseSchema = z.object({
-  name: z.string().min(1).max(100),
+  name: z.string().min(1, 'Nome é obrigatório').max(100),
   description: z.string().max(500).optional().nullable(),
   starts_at: z.string().datetime().optional().nullable(),
   ends_at: z.string().datetime().optional().nullable(),
-  is_active: z.boolean().default(true),
-  is_default: z.boolean().default(false),
 })
 
 export const PriceTableInputSchema = PriceTableBaseSchema.refine((data) => {
@@ -77,21 +75,28 @@ export const PriceTableInputSchema = PriceTableBaseSchema.refine((data) => {
     return new Date(data.starts_at) < new Date(data.ends_at)
   }
   return true
-}, { message: 'A data de início deve ser anterior à data de fim', path: ['ends_at'] })
+}, { message: 'A data de término deve ser posterior à data de início', path: ['ends_at'] })
 
 export const PriceEntryInputSchema = z.object({
   price_table_id: z.string().uuid(),
   product_id: z.string().uuid(),
   variant_id: z.string().uuid().optional().nullable(),
-  unit_price: z.number().min(0, 'O preço não pode ser negativo'),
-  promotional_price: z.number().min(0).optional().nullable(),
+  unit_price: z.string().min(1, 'Preço é obrigatório'),
+  promotional_price: z.string().optional().nullable(),
   promotion_starts_at: z.string().datetime().optional().nullable(),
   promotion_ends_at: z.string().datetime().optional().nullable(),
-  min_quantity: z.number().int().min(1).optional().nullable(),
-  is_active: z.boolean().default(true),
+  min_quantity: z.number().int().min(1, 'Quantidade mínima inválida').default(1),
 }).refine((data) => {
-  if (data.promotional_price !== undefined && data.promotional_price !== null) {
-    return data.promotional_price <= data.unit_price
+  if (data.promotional_price) {
+    const normal = Number(data.unit_price)
+    const promo = Number(data.promotional_price)
+    return promo < normal
   }
   return true
-}, { message: 'O preço promocional deve ser menor ou igual ao preço unitário', path: ['promotional_price'] })
+}, { message: 'O preço promocional deve ser menor que o preço normal', path: ['promotional_price'] })
+.refine((data) => {
+  if (data.promotion_starts_at && data.promotion_ends_at) {
+    return new Date(data.promotion_starts_at) < new Date(data.promotion_ends_at)
+  }
+  return true
+}, { message: 'A data de término da promoção deve ser posterior à data de início', path: ['promotion_ends_at'] })
