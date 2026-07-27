@@ -143,13 +143,25 @@ export async function toggleBrandStatusAction(id: string, isActive: boolean) {
 }
 
 // PRODUTOS
-export async function createProductDraftAction(data: any) {
+export async function createProductAction(data: any) {
   const { user } = await requireAdmin()
-  const parsed = ProductInputSchema.parse({ ...data, is_published: false })
+  const { ProductInputSchema } = await import('@/lib/validations/admin-products')
+  const parsed = ProductInputSchema.parse(data)
+  // Forçar rascunho
+  parsed.is_published = false
   const supabase = (await createClient()) as any
 
+  const { data: existingSlug } = await supabase.from('products').select('id').eq('slug', parsed.slug).maybeSingle()
+  if (existingSlug) return { success: false, message: 'Este slug já está em uso por outro produto.' }
+  
+  const { data: existingSku } = await supabase.from('products').select('id').eq('sku', parsed.sku).maybeSingle()
+  if (existingSku) return { success: false, message: 'Este SKU já está em uso por outro produto.' }
+
   const { data: created, error } = await supabase.from('products').insert(parsed as any).select('id').single()
-  if (error) return { success: false, message: error.message }
+  if (error) {
+    if (error.code === '23505') return { success: false, message: 'Slug ou SKU já em uso (violou restrição única).' }
+    return { success: false, message: 'Erro ao criar o produto.' }
+  }
 
   await createAuditLog('PRODUCT_CREATED', 'products', created.id, parsed)
   invalidateProductCache(parsed.slug)
@@ -158,14 +170,37 @@ export async function createProductDraftAction(data: any) {
 
 export async function updateProductAction(id: string, data: any) {
   const { user } = await requireAdmin()
+  const { ProductInputSchema } = await import('@/lib/validations/admin-products')
   const parsed = ProductInputSchema.partial().parse(data)
   const supabase = (await createClient()) as any
 
+  if (parsed.slug) {
+    const { data: existingSlug } = await supabase.from('products').select('id').eq('slug', parsed.slug).neq('id', id).maybeSingle()
+    if (existingSlug) return { success: false, message: 'Este slug já está em uso por outro produto.' }
+  }
+  if (parsed.sku) {
+    const { data: existingSku } = await supabase.from('products').select('id').eq('sku', parsed.sku).neq('id', id).maybeSingle()
+    if (existingSku) return { success: false, message: 'Este SKU já está em uso por outro produto.' }
+  }
+
+  const { data: oldProduct } = await supabase.from('products').select('slug').eq('id', id).single()
+
   const { error } = await supabase.from('products').update(parsed as any).eq('id', id)
-  if (error) return { success: false, message: error.message }
+  if (error) {
+    if (error.code === '23505') return { success: false, message: 'Slug ou SKU já em uso (violou restrição única).' }
+    return { success: false, message: 'Erro ao atualizar o produto.' }
+  }
 
   await createAuditLog('PRODUCT_UPDATED', 'products', id, parsed)
-  invalidateProductCache(parsed.slug)
+  if (oldProduct?.slug && oldProduct.slug !== parsed.slug) {
+    invalidateProductCache(oldProduct.slug)
+  }
+  if (parsed.slug) {
+    invalidateProductCache(parsed.slug)
+  } else {
+    invalidateProductCache()
+  }
+
   return { success: true }
 }
 
@@ -173,10 +208,16 @@ export async function publishProductAction(id: string) {
   const { user } = await requireAdmin()
   const supabase = (await createClient()) as any
 
+  // Validar se o produto está ativo e possui nome válido (regra de negócio confirmada)
+  const { data: product } = await supabase.from('products').select('is_active, name').eq('id', id).single()
+  if (!product || !product.is_active) {
+    return { success: false, message: 'O produto precisa estar ativo para ser publicado.' }
+  }
+
   const { error } = await supabase.from('products').update({ is_published: true } as any).eq('id', id)
   if (error) return { success: false, message: error.message }
 
-  await createAuditLog('PRODUCT_PUBLICATION_TOGGLED', 'products', id, { is_published: true })
+  await createAuditLog('PRODUCT_PUBLISHED', 'products', id, { is_published: true })
   invalidateProductCache()
   return { success: true }
 }
@@ -188,7 +229,20 @@ export async function unpublishProductAction(id: string) {
   const { error } = await supabase.from('products').update({ is_published: false } as any).eq('id', id)
   if (error) return { success: false, message: error.message }
 
-  await createAuditLog('PRODUCT_PUBLICATION_TOGGLED', 'products', id, { is_published: false })
+  await createAuditLog('PRODUCT_UNPUBLISHED', 'products', id, { is_published: false })
+  invalidateProductCache()
+  return { success: true }
+}
+
+export async function toggleProductStatusAction(id: string, isActive: boolean) {
+  const { user } = await requireAdmin()
+  const supabase = (await createClient()) as any
+
+  const { error } = await supabase.from('products').update({ is_active: isActive } as any).eq('id', id)
+  if (error) return { success: false, message: error.message }
+
+  const actionName = isActive ? 'PRODUCT_REACTIVATED' : 'PRODUCT_DEACTIVATED'
+  await createAuditLog(actionName, 'products', id, { is_active: isActive })
   invalidateProductCache()
   return { success: true }
 }
@@ -196,11 +250,19 @@ export async function unpublishProductAction(id: string) {
 // VARIANTES
 export async function createVariantAction(data: any) {
   const { user } = await requireAdmin()
-  const parsed = ProductVariantInputSchema.parse(data)
+  const { VariantInputSchema } = await import('@/lib/validations/admin-products')
+  const parsed = VariantInputSchema.parse(data)
   const supabase = (await createClient()) as any
 
+  // Checagem proativa
+  const { data: existingSku } = await supabase.from('product_variants').select('id').eq('sku', parsed.sku).maybeSingle()
+  if (existingSku) return { success: false, message: 'Este SKU já está em uso por outra variante.' }
+
   const { data: created, error } = await supabase.from('product_variants').insert(parsed as any).select('id').single()
-  if (error) return { success: false, message: error.message }
+  if (error) {
+    if (error.code === '23505') return { success: false, message: 'Este SKU já está em uso (violou restrição única).' }
+    return { success: false, message: 'Erro ao criar a variante.' }
+  }
 
   await createAuditLog('VARIANT_CREATED', 'product_variants', created.id, parsed)
   invalidateProductCache()
@@ -209,11 +271,29 @@ export async function createVariantAction(data: any) {
 
 export async function updateVariantAction(id: string, data: any) {
   const { user } = await requireAdmin()
-  const parsed = ProductVariantInputSchema.partial().parse(data)
+  const { VariantInputSchema } = await import('@/lib/validations/admin-products')
+  const parsed = VariantInputSchema.partial().parse(data)
   const supabase = (await createClient()) as any
 
+  if (parsed.sku) {
+    const { data: existingSku } = await supabase.from('product_variants').select('id').eq('sku', parsed.sku).neq('id', id).maybeSingle()
+    if (existingSku) return { success: false, message: 'Este SKU já está em uso por outra variante.' }
+  }
+
+  // Prevenir edição cruzada confirmando se product_id bate
+  const { data: existingVariant } = await supabase.from('product_variants').select('product_id').eq('id', id).single()
+  if (!existingVariant) return { success: false, message: 'Variante não encontrada.' }
+  if (parsed.product_id && parsed.product_id !== existingVariant.product_id) {
+    return { success: false, message: 'Não é possível alterar o produto da variante (Edição cruzada bloqueada).' }
+  }
+  // remover product_id do update seguro
+  delete parsed.product_id
+
   const { error } = await supabase.from('product_variants').update(parsed as any).eq('id', id)
-  if (error) return { success: false, message: error.message }
+  if (error) {
+    if (error.code === '23505') return { success: false, message: 'Este SKU já está em uso (violou restrição única).' }
+    return { success: false, message: 'Erro ao atualizar a variante.' }
+  }
 
   await createAuditLog('VARIANT_UPDATED', 'product_variants', id, parsed)
   invalidateProductCache()
@@ -227,7 +307,8 @@ export async function toggleVariantStatusAction(id: string, isActive: boolean) {
   const { error } = await supabase.from('product_variants').update({ is_active: isActive } as any).eq('id', id)
   if (error) return { success: false, message: error.message }
 
-  await createAuditLog('VARIANT_DEACTIVATED', 'product_variants', id, { is_active: isActive })
+  const actionName = isActive ? 'VARIANT_REACTIVATED' : 'VARIANT_DEACTIVATED'
+  await createAuditLog(actionName, 'product_variants', id, { is_active: isActive })
   invalidateProductCache()
   return { success: true }
 }

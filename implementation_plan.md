@@ -1,72 +1,88 @@
-# Fundação do Painel Administrativo (Bloco 11D-A)
+# Implementação do BLOCO 11D-C: Produtos, Variantes e Imagens
+
+Este plano detalha a implementação das interfaces e da lógica administrativa para Produtos, Variantes e Imagens (BLOCO 11D-C), partindo do baseline exato exigido (`2d9b13e`), com 50/50 PASS em Admin Catalog e integrações validadas. Nenhuma exclusão física ou gerenciamento de estoque explícito será inserido neste bloco.
+
+---
 
 ## User Review Required
-N/A - O plano reflete exatamente as especificações do Bloco 11D-A.
+
+> [!WARNING]
+> Este plano propõe o upload de imagens de produto utilizando validação de *magic bytes* via Server Action. Como o limite nativo do Next.js App Router para bodies JSON/FormData em Server Actions é 1 MB, optaremos pela **Estratégia B (Route Handler autenticado)** para viabilizar os 5 MB do bucket, protegendo contra CSRF e validando Sessão, Product ID, Mime e Limite de Corpo estritamente, retornando JSON seguro para a UI.
+> O Sr. aprova a adoção da Estratégia B (Route Handler) para o Upload?
+
+> [!CAUTION]
+> As ações de "Tornar Principal" e "Reordenar Imagens" serão realizadas via **RPC Transacional** no Supabase, garantindo atomicidade total sem múltiplos acessos round-trip e gerando exatamente 1 log por operação de negócio.
+
+---
 
 ## Open Questions
-N/A
+
+Nenhuma no momento. O detalhamento prévio foi excelente.
+
+---
 
 ## Proposed Changes
 
-### 1. Auditoria e Estrutura
-Foi constatado que as páginas sob `app/(admin)/admin` existem apenas como placeholders (`page.tsx` básicos sem CRUD). O `Zod` já está instalado no `package.json`. A RPC de estoque `adjust_inventory_atomic` já existe no banco e passou na auditoria anterior.
+### 1. Auditoria dos Arquivos Existentes
+Conforme orientação, avaliamos os arquivos existentes sob o prisma de **MODIFY**:
+- **MODIFY** `app/(admin)/admin/produtos/page.tsx`: Existente como placeholder. Receberá listagem completa com Table, paginação, filtros e buscas (ilike).
+- **MODIFY** `app/(admin)/admin/produtos/novo/page.tsx`: Existente como placeholder. Renderizará formulário base com validações Zod.
+- **MODIFY** `app/(admin)/admin/produtos/[id]/page.tsx`: Existente como placeholder. Usará `await params` (Next 16) e estruturará abas virtuais (Geral, Variantes, Imagens). Retornará `notFound()` caso UUID malformado/inexistente.
+- **MODIFY** `app/actions/catalog.ts`: Será preservado focado em produtos e variantes (criação, edição, publicação, ativação). Não transformaremos em monólito.
+- **MODIFY** `next.config.ts`: Será atualizado APENAS caso necessite configurar limites da estratégia adotada ou hostname de imagens públicas.
+- Componentes Base (`AdminPageHeader`, `Table`, `StatusBadge`, `SubmitButton`, `ConfirmStatusDialog`) serão totalmente **reutilizados**.
 
-### 2. Autorização Centralizada e Helpers
-#### [NEW] [lib/auth/admin.ts](file:///c:/Users/eduar/OneDrive/Desktop/Site-Campos-e-Coelho/app-b2b/lib/auth/admin.ts)
-Centralizará `requireAdminSession()` garantindo que apenas usuários autenticados com `role = 'admin'` no banco (via SELECT em `profiles`) consigam executar mutações ou ler dados administrativos.
+### 2. Schema e Banco de Dados (PostgreSQL / Storage)
+- **products**: Possui `id`, `name`, `slug`, `sku`, `category_id`, `brand_id`, `is_active`, `is_published`, `min_quantity` (>0), `multiple_quantity` (>0), SEO, Descrições.
+- **product_variants**: Possui `product_id`, `name`, `sku`, `attributes` (jsonb), `barcode`, `is_active`, `min_quantity`, `multiple_quantity`.
+- **product_images**: Possui `product_id`, `url`, `alt_text`, `position` (>=0), `is_primary`.
+- **Storage (`product-images`)**: Bucket PÚBLICO para leitura. Limite de 5MB. Mimes: jpeg, png, webp. Inserções/Atualizações bloqueadas por RLS explícito (is_admin()).
 
-#### [NEW] [lib/utils/audit.ts](file:///c:/Users/eduar/OneDrive/Desktop/Site-Campos-e-Coelho/app-b2b/lib/utils/audit.ts)
-Extrairemos a função `createAuditLog` já desenvolvida para um módulo dedicado, respeitando as regras de payload seguro.
+*O comportamento público é claro*: Sem Variante ativa = Sem preço (fallback "Valor Indisponível"). Rascunho = `404 Not Found` (bloqueado na raiz do RLS). Imagem principal não impede publicação, a menos que definamos estritamente (Validaremos dinamicamente).
 
-#### [NEW] [lib/utils/cache.ts](file:///c:/Users/eduar/OneDrive/Desktop/Site-Campos-e-Coelho/app-b2b/lib/utils/cache.ts)
-Centralizará `revalidateAdminCatalog()` invocando as tags/caminhos necessários (`/`, `/catalogo`, `/produto/[slug]`, `/admin/*`).
+### 3. Arquitetura das Actions
+- **MODIFY** `app/actions/catalog.ts`: Centralizará as operações CRUD base. Incorporando `'use server'`.
+  - `createProductAction`, `updateProductAction`, `publishProductAction`, `unpublishProductAction`, `toggleProductStatusAction`.
+  - `createVariantAction`, `updateVariantAction`, `toggleVariantStatusAction`.
+- **NEW** `app/actions/product-images.ts`: Módulo isolado `use server` exclusivo para imagens.
+  - `updateImageAltTextAction`, `removeProductImageAction`.
+- Apenas 1 (um) Audit Log imutável e transacional via DB por operação aprovada (Zero logs para constraints e rejects).
 
-### 3. Validações Server-Side (Zod)
-#### [NEW] [lib/validations/admin-catalog.ts](file:///c:/Users/eduar/OneDrive/Desktop/Site-Campos-e-Coelho/app-b2b/lib/validations/admin-catalog.ts)
-Criação dos schemas rigorosos:
-- `CategoryInput`
-- `BrandInput`
-- `ProductInput`
-- `ProductVariantInput`
-- `InventoryAdjustmentInput`
-- `PriceTableInput`
-- `PriceEntryInput`
+### 4. Gestão de Imagens e Atomicidade (Route Handler)
+- **NEW** `app/api/admin/images/upload/route.ts`: Handler restrito para recebimento do arquivo de até 5MB. Inspeciona Magic Bytes no Buffer, checa Auth (Admin), move o Buffer via `@supabase/supabase-js` autenticado e insere no DB com transação / rollback na própria pipeline (se DB falhar, aciona `.remove()` no Storage de forma explícita).
+- **NEW** `supabase/migrations/[...]`: Migration contendo **RPCs** para gerenciamento seguro:
+  - `set_primary_image(image_id, product_id)`: Limpa a flag anterior e marca a nova gerando audit_log.
+  - `reorder_images(json_payload)`: Reordena as posições dentro de uma transação.
 
-### 4. Camada de Dados Administrativa
-#### [NEW] [lib/data/admin-catalog.ts](file:///c:/Users/eduar/OneDrive/Desktop/Site-Campos-e-Coelho/app-b2b/lib/data/admin-catalog.ts)
-Implementação de:
-- `getAdminCategories()` / `getAdminCategoryById()`
-- `getAdminBrands()` / `getAdminBrandById()`
-- `getAdminProducts()` / `getAdminProductById()`
-- `getAdminInventory()`
-- `getAdminPriceTables()` / `getAdminPriceTableById()`
-Todas as funções vão exigir a sessão de Admin antes de invocar as queries Supabase, com suporte a filtros e paginação.
+### 5. Formulários, Listagens e Componentes
+- **Listagem de Produtos**: Receberá queries unificadas com busca em `name`, `sku`, `slug` via `ilike` sem N+1. Paginação Server-side controlada via searchParams.
+- **Criação de Produto**: Criará como rascunho por padrão. Validação de slug/sku duplicados barrados já via Zod e DB.
+- **Edição ([id])**: Carrega as sessões "Geral, SEO, Variantes, Imagens". Em slug novo: revalidações disparam invalidação (404 no slug antigo).
 
-### 5. Server Actions (Desacoplamento)
-Vamos remover o arquivo provisório `admin-catalog.ts` e dividir as responsabilidades:
+### 6. Validação e Invalidação (Cache)
+- Cache Updates via `revalidatePath('/catalogo')`, `revalidatePath('/busca')`, `revalidatePath('/')`, `revalidatePath('/admin/produtos')`.
+- Rota legada de slug recebe `revalidatePath('/produto/' + oldSlug, 'page')` explícito sem criar mocks de redirecionamento.
 
-#### [DELETE] [app/actions/admin-catalog.ts](file:///c:/Users/eduar/OneDrive/Desktop/Site-Campos-e-Coelho/app-b2b/app/actions/admin-catalog.ts)
-#### [NEW] [app/actions/catalog.ts](file:///c:/Users/eduar/OneDrive/Desktop/Site-Campos-e-Coelho/app-b2b/app/actions/catalog.ts)
-Ações de Produtos, Categorias, Marcas e Variantes.
-#### [NEW] [app/actions/inventory.ts](file:///c:/Users/eduar/OneDrive/Desktop/Site-Campos-e-Coelho/app-b2b/app/actions/inventory.ts)
-Ações de `adjustInventoryAction` consumindo a RPC `adjust_inventory_atomic`.
-#### [NEW] [app/actions/pricing.ts](file:///c:/Users/eduar/OneDrive/Desktop/Site-Campos-e-Coelho/app-b2b/app/actions/pricing.ts)
-Ações de `createPriceTableAction`, `updatePriceTableAction`, e `upsertPriceEntryAction`.
-
-Todas as Server Actions utilizarão Zod parse e gerarão logs de auditoria sem retornar erros brutos SQL.
-
-### 6. Rotas Base (Placeholders)
-Manteremos as rotas já verificadas:
-- `/admin/categorias`, `/admin/marcas`, `/admin/produtos`, `/admin/estoque`, `/admin/tabelas-de-precos`
-Adicionaremos `/nova` e `/[id]` apenas como placeholders estruturais para receber os futuros formulários.
+### 7. Expansão de Regressões e Testes
+Serão orquestrados **pelo menos 25 testes adicionais**:
+- `scripts/test-admin-catalog.mjs`: Testes automatizados em NodeJS simulando Client Admin (sem API pública extra) para validar Produtos, Variantes (Edição cruzada, limites JSON) e Imagens (Validações de Magic Bytes e RPC Transacional). Ao fim, alcançará *75 PASS / 0 FAIL*.
+- `scripts/test-http-admin-catalog.mjs`: Validação HTTP real autenticada nos novos endpoints REST e Views.
 
 ## Verification Plan
 
-### Automated Tests
-Iremos readequar os testes administrativos locais:
-- `node scripts/test-admin-catalog.mjs` (testando os Server Actions via import).
-- `node scripts/test-http-admin-catalog.mjs` (testando acesso negado para non-admins).
+### Testes Manuais
+A aprovação desta branch culminará numa sessão de validação local comprovando a navegação nos endpoints desenvolvidos:
+1. Navegar por listagens paginadas responsivas;
+2. Enviar JPEGs validados via *Magic Bytes* (bloqueando corrompidos);
+3. Reordenar imagens comprovando a Action Atômica RPC;
+4. Alternar a variante de um produto, ativando/desativando;
+5. Validar deleção e compensação (Storage x DB).
 
-Ao final, executaremos:
-- `npm run type-check` e `npm run build`
-- Validação completa com as demais suítes RLS já estabilizadas (`test-rls.mjs`, etc).
+### Testes Automatizados (Regressão Final)
+O ciclo fechará com os comandos no Windows:
+- `node scripts/test-admin-catalog.mjs` (75 PASS)
+- `node scripts/test-http-admin-catalog.mjs` (Cobertura atualizada)
+- Demais testes com 100% de integridade confirmada.
+- `npm.cmd run type-check` (0 errors)
+- `npm.cmd run build` (Sucesso Turbopack)
+- `npx.cmd supabase migration list` (Sincronização atestada)

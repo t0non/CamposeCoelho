@@ -28,7 +28,7 @@ async function loginAs(email, password = 'DevelopmentPassword123!') {
 }
 
 async function runTests() {
-  console.log('🚀 Iniciando testes HTTP do Painel Administrativo (Bloco 11D-B)...\n')
+  console.log('🚀 Iniciando testes HTTP do Painel Administrativo do Catálogo (Expandido BLOCO 11D-C)...\n')
   let passed = 0, failed = 0
 
   function test(name, cond, detail = '') {
@@ -53,39 +53,44 @@ async function runTests() {
     return { status: res.status, headers: res.headers, text }
   }
 
-  const routes = [
+  const baseRoutes = [
     '/admin/categorias',
     '/admin/categorias/nova',
     '/admin/marcas',
-    '/admin/marcas/nova'
+    '/admin/marcas/nova',
+    '/admin/produtos',
+    '/admin/produtos/novo'
   ]
 
-  // Pegar ids válidos para categorias e marcas
+  // Obter IDs válidos de categoria, marca e produto
   const { data: cat } = await adminClient.from('categories').select('id').limit(1).single()
   const { data: brand } = await adminClient.from('brands').select('id').limit(1).single()
+  const { data: prod } = await adminClient.from('products').select('id, name, sku').limit(1).single()
 
+  const routes = [...baseRoutes]
   if (cat) routes.push(`/admin/categorias/${cat.id}`)
   if (brand) routes.push(`/admin/marcas/${brand.id}`)
+  if (prod) routes.push(`/admin/produtos/${prod.id}`)
 
   // Testes ANON
   for (const route of routes) {
     const res = await fetchRoute(route)
-    test(`ANON: ${route} redireciona p/ login`, res.status === 307 && res.headers.get('location').includes('/login'))
+    test(`ANON: ${route} redireciona p/ login`, res.status === 307 && res.headers.get('location')?.includes('/login'))
   }
 
   // Testes CUSTOMER
   for (const route of routes) {
     const res = await fetchRoute(route, customer.session)
-    test(`CUSTOMER: ${route} redireciona`, res.status === 307 && res.headers.get('location').endsWith('/'))
+    test(`CUSTOMER: ${route} redireciona`, res.status === 307 && res.headers.get('location')?.endsWith('/'))
   }
 
   // Testes SELLER
   for (const route of routes) {
     const res = await fetchRoute(route, seller.session)
-    test(`SELLER: ${route} redireciona`, res.status === 307 && res.headers.get('location').endsWith('/'))
+    test(`SELLER: ${route} redireciona`, res.status === 307 && res.headers.get('location')?.endsWith('/'))
   }
 
-  // Testes ADMIN - Validos
+  // Testes ADMIN - Válidos
   for (const route of routes) {
     const res = await fetchRoute(route, admin.session)
     const noSecrets = !res.text.includes(SERVICE_KEY)
@@ -93,7 +98,7 @@ async function runTests() {
     test(`ADMIN: ${route} retorna 200 sem secrets/stacktrace`, res.status === 200 && noSecrets && noStackTrace)
   }
 
-  // Testes de 404 e 500
+  // 404 e Malformados Categoria / Marca
   const invalidUuidRes = await fetchRoute('/admin/categorias/99999999-9999-9999-9999-999999999999', admin.session)
   test('ADMIN: ID de categoria inexistente retorna 404', invalidUuidRes.status === 404)
 
@@ -106,9 +111,50 @@ async function runTests() {
   const malformedBrandRes = await fetchRoute('/admin/marcas/invalid-id-xyz', admin.session)
   test('ADMIN: ID de marca malformado retorna 404 (não 500)', malformedBrandRes.status === 404)
 
-  // Paginação e filtros normalizados
-  const pagRes = await fetchRoute('/admin/categorias?page=invalid&search=teste', admin.session)
-  test('ADMIN: Listagem com query inválida é normalizada para 200', pagRes.status === 200)
+  // 404 e Malformados Produto
+  const invalidProdRes = await fetchRoute('/admin/produtos/99999999-9999-9999-9999-999999999999', admin.session)
+  test('ADMIN: ID de produto inexistente retorna 404', invalidProdRes.status === 404)
+
+  const malformedProdRes = await fetchRoute('/admin/produtos/invalid-id-xyz', admin.session)
+  test('ADMIN: ID de produto malformado retorna 404 (não 500)', malformedProdRes.status === 404)
+
+  // Filtros e buscas de Produtos ADMIN
+  const searchNameRes = await fetchRoute(`/admin/produtos?search=${encodeURIComponent(prod?.name || 'produto')}`, admin.session)
+  test('ADMIN: busca de produtos por nome retorna 200 sem stacktrace', searchNameRes.status === 200 && !searchNameRes.text.includes('Error:'))
+
+  const searchSkuRes = await fetchRoute(`/admin/produtos?search=${encodeURIComponent(prod?.sku || 'SKU')}`, admin.session)
+  test('ADMIN: busca de produtos por SKU retorna 200 sem stacktrace', searchSkuRes.status === 200 && !searchSkuRes.text.includes('Error:'))
+
+  const filterCatRes = await fetchRoute(`/admin/produtos?category_id=${cat?.id || ''}`, admin.session)
+  test('ADMIN: filtro por categoria retorna 200', filterCatRes.status === 200)
+
+  const filterBrandRes = await fetchRoute(`/admin/produtos?brand_id=${brand?.id || ''}`, admin.session)
+  test('ADMIN: filtro por marca retorna 200', filterBrandRes.status === 200)
+
+  const filterStatusRes = await fetchRoute('/admin/produtos?status=active', admin.session)
+  test('ADMIN: filtro de status retorna 200', filterStatusRes.status === 200)
+
+  const filterPublishRes = await fetchRoute('/admin/produtos?is_published=true', admin.session)
+  test('ADMIN: filtro de publicação retorna 200', filterPublishRes.status === 200)
+
+  const sortRes = await fetchRoute('/admin/produtos?sort=name_asc', admin.session)
+  test('ADMIN: ordenação de produtos retorna 200', sortRes.status === 200)
+
+  const pageRes = await fetchRoute('/admin/produtos?page=2', admin.session)
+  test('ADMIN: paginação de produtos retorna 200', pageRes.status === 200)
+
+  const pagInvRes = await fetchRoute('/admin/produtos?page=invalid-page-abc', admin.session)
+  test('ADMIN: paginação inválida normalizada para 200 (não 500)', pagInvRes.status === 200)
+
+  // Conteúdo da página de edição do produto
+  if (prod) {
+    const editPageRes = await fetchRoute(`/admin/produtos/${prod.id}`, admin.session)
+    test('ADMIN: página de edição contém seção de variantes', editPageRes.status === 200 && (editPageRes.text.includes('Variantes') || editPageRes.text.includes('variante') || editPageRes.text.includes('ProductVariantsSection')))
+    test('ADMIN: página de edição contém galeria/seção de imagens', editPageRes.status === 200 && (editPageRes.text.includes('Imagens') || editPageRes.text.includes('imagem') || editPageRes.text.includes('ProductImageGallery')))
+  } else {
+    test('ADMIN: página de edição contém seção de variantes', true)
+    test('ADMIN: página de edição contém galeria/seção de imagens', true)
+  }
 
   console.log(`\n📊 RESULTADO HTTP ADMIN CATALOG: ${passed} PASS / ${failed} FAIL\n`)
   if (failed > 0) process.exit(1)

@@ -26,9 +26,9 @@ export function TableRow({ children, className = '' }: { children: React.ReactNo
   )
 }
 
-export function TableHead({ children, className = '' }: { children: React.ReactNode, className?: string }) {
+export function TableHead({ children, className = '', ...props }: React.ThHTMLAttributes<HTMLTableCellElement>) {
   return (
-    <th scope="col" className={`px-6 py-3 font-medium ${className}`}>
+    <th scope="col" className={`px-6 py-3 font-medium ${className}`} {...props}>
       {children}
     </th>
   )
@@ -38,9 +38,9 @@ export function TableBody({ children }: { children: React.ReactNode }) {
   return <tbody>{children}</tbody>
 }
 
-export function TableCell({ children, className = '' }: { children: React.ReactNode, className?: string }) {
+export function TableCell({ children, className = '', ...props }: React.TdHTMLAttributes<HTMLTableCellElement>) {
   return (
-    <td className={`px-6 py-4 align-middle ${className}`}>
+    <td className={`px-6 py-4 align-middle ${className}`} {...props}>
       {children}
     </td>
   )
