@@ -19,8 +19,8 @@ export const mockHeroBanners: HeroBannerItem[] = [
       'Encontre produtos para revenda, condições exclusivas para CNPJ e um catálogo preparado para abastecer o seu negócio com alta rentabilidade.',
     primaryCta: { label: 'Explorar Catálogo', href: '/catalogo' },
     secondaryCta: { label: 'Cadastrar Minha Empresa', href: '/cadastro' },
-    desktopImage: '/placeholder-hero-1.png',
-    mobileImage: '/placeholder-hero-1-mobile.png',
+    desktopImage: 'https://images.unsplash.com/photo-1556740738-b6a63e27c4df?q=80&w=1200&auto=format&fit=crop',
+    mobileImage: 'https://images.unsplash.com/photo-1556740738-b6a63e27c4df?q=80&w=600&auto=format&fit=crop',
     theme: 'dark',
   },
   {
@@ -30,8 +30,8 @@ export const mockHeroBanners: HeroBannerItem[] = [
     description:
       'Escolha seus produtos por lotes ou caixas fechadas, monte o pedido e acompanhe cada etapa da entrega em um único lugar.',
     primaryCta: { label: 'Conhecer Categorias', href: '/catalogo' },
-    desktopImage: '/placeholder-hero-2.png',
-    mobileImage: '/placeholder-hero-2-mobile.png',
+    desktopImage: 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?q=80&w=1200&auto=format&fit=crop',
+    mobileImage: 'https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?q=80&w=600&auto=format&fit=crop',
     theme: 'dark',
   },
   {
@@ -42,8 +42,8 @@ export const mockHeroBanners: HeroBannerItem[] = [
       'Cadastre seu CNPJ para consultar preços da tabela atacadista, disponibilidade imediata de estoque e facilidade no faturamento.',
     primaryCta: { label: 'Solicitar Cadastro', href: '/cadastro' },
     secondaryCta: { label: 'Já tenho cadastro', href: '/login' },
-    desktopImage: '/placeholder-hero-3.png',
-    mobileImage: '/placeholder-hero-3-mobile.png',
+    desktopImage: 'https://images.unsplash.com/photo-1556741533-6e40ce36a0fb?q=80&w=1200&auto=format&fit=crop',
+    mobileImage: 'https://images.unsplash.com/photo-1556741533-6e40ce36a0fb?q=80&w=600&auto=format&fit=crop',
     theme: 'dark',
   },
 ]

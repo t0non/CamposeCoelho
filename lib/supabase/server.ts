@@ -44,9 +44,9 @@ export async function createClient(): Promise<SupabaseClient<Database, "public",
         },
       },
       global: {
-        headers: {
-          Authorization: headerStore.get('authorization') ?? '',
-        },
+        headers: headerStore.has('authorization')
+          ? { Authorization: headerStore.get('authorization')! }
+          : undefined,
       },
     },
   )

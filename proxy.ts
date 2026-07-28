@@ -144,8 +144,11 @@ export async function proxy(request: NextRequest) {
 
     const role = (profileData as Pick<ProfileRow, 'role'> | null)?.role
 
+    console.log('[proxy.ts] /admin access check:', { userId: user.id, role, profileData })
+
     if (role !== 'admin') {
       // Redireciona para o destino correto sem expor o motivo
+      console.log('[proxy.ts] Redirecting to / because role is not admin')
       return NextResponse.redirect(new URL('/', request.url))
     }
 

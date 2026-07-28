@@ -34,9 +34,9 @@ export function createProxyClient(
         },
       },
       global: {
-        headers: {
-          Authorization: request.headers.get('authorization') ?? '',
-        },
+        headers: request.headers.has('authorization')
+          ? { Authorization: request.headers.get('authorization')! }
+          : undefined,
       },
     },
   )

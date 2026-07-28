@@ -240,8 +240,8 @@ export async function getHomePageData(authContext: AuthContext): Promise<HomePag
           subtitle: 'CONDIÇÕES ESPECIAIS B2B',
           description: 'Compre direto da distribuidora com preços exclusivos por tabela comercial e condições de pagamento flexíveis.',
           primaryCta: { label: 'Explorar Catálogo Real', href: '/catalogo' },
-          desktopImage: '/placeholder-hero-1.png',
-          mobileImage: '/placeholder-hero-1.png',
+          desktopImage: 'https://images.unsplash.com/photo-1556740738-b6a63e27c4df?q=80&w=1200&auto=format&fit=crop',
+          mobileImage: 'https://images.unsplash.com/photo-1556740738-b6a63e27c4df?q=80&w=600&auto=format&fit=crop',
           theme: 'dark',
         },
       ]
