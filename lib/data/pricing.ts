@@ -111,6 +111,74 @@ export async function getEffectivePriceForCurrentCustomer(
 }
 
 /**
+ * Helper Server-Only: preço a nível de PRODUTO (variant_id NULL), para
+ * produtos sem nenhuma variante ativa. Usa consulta direta restrita ao
+ * price_table_id da sessão do próprio cliente (mesmo padrão de
+ * getCatalogPricingForCurrentCustomer) — não aceita companyId/priceTableId
+ * do frontend.
+ */
+export async function getEffectiveProductLevelPriceForCurrentCustomer(
+  productId: string,
+): Promise<PriceInfo | undefined> {
+  if (!productId) return undefined
+
+  const sessionInfo = await getCustomerSessionPricing()
+  if (!sessionInfo.canViewPrices || !sessionInfo.priceTableId) return undefined
+
+  const supabase = await createClient()
+
+  const { data } = await supabase
+    .from('price_table_products')
+    .select(
+      `
+      unit_price,
+      promotional_price,
+      promotion_starts_at,
+      promotion_ends_at,
+      is_active,
+      price_tables (is_active, starts_at, ends_at)
+      `,
+    )
+    .eq('price_table_id', sessionInfo.priceTableId)
+    .eq('product_id', productId)
+    .is('variant_id', null)
+    .eq('is_active', true)
+    .order('min_quantity', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  if (!data) return undefined
+
+  const item = data as unknown as {
+    unit_price: number
+    promotional_price: number | null
+    promotion_starts_at: string | null
+    promotion_ends_at: string | null
+    price_tables: { is_active: boolean; starts_at: string | null; ends_at: string | null } | null
+  }
+
+  if (!item.price_tables || !item.price_tables.is_active) return undefined
+  const now = new Date()
+  if (item.price_tables.starts_at && new Date(item.price_tables.starts_at) > now) return undefined
+  if (item.price_tables.ends_at && new Date(item.price_tables.ends_at) < now) return undefined
+
+  const hasValidPromo = isPromotionValid(
+    item.promotional_price,
+    item.unit_price,
+    item.promotion_starts_at,
+    item.promotion_ends_at,
+  )
+  const effective_price = hasValidPromo ? (item.promotional_price as number) : item.unit_price
+
+  return {
+    unit_price: Number(item.unit_price),
+    promotional_price: hasValidPromo ? Number(item.promotional_price) : null,
+    effective_price: Number(effective_price),
+    is_on_promotion: hasValidPromo,
+  }
+}
+
+/**
  * Helper Server-Only: Resolução em LOTE de preços para catálogo e busca.
  * Evita chamadas N+1 ao banco.
  */

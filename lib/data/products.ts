@@ -2,7 +2,11 @@ import { createClient } from '@/lib/supabase/server'
 import type { AuthContext } from '@/types/auth.types'
 import type { CatalogProduct, PriceInfo } from '@/types/product.types'
 import { getProductImageUrl } from '@/lib/utils/storage-url'
-import { getEffectivePriceForCurrentCustomer, getCatalogPricingForCurrentCustomer } from '@/lib/data/pricing'
+import {
+  getEffectivePriceForCurrentCustomer,
+  getEffectiveProductLevelPriceForCurrentCustomer,
+  getCatalogPricingForCurrentCustomer,
+} from '@/lib/data/pricing'
 
 export interface ProductDetailInfo {
   longDescription?: string
@@ -46,6 +50,8 @@ export interface FullProductData {
   price?: PriceInfo
   detail: ProductDetailInfo
   variants: Array<{ id: string; sku: string; name: string; attributes: Record<string, string>; availableStock: number }>
+  /** Variante que o servidor resolveu para exibição/preço (null quando o produto não tem variantes). */
+  currentVariantId: string | null
   volumeDiscounts?: VolumeDiscountTier[]
   attributes: Record<string, string>
   exactStock?: number
@@ -89,7 +95,7 @@ export async function getProductBySlug(
       brands!brand_id (id, name, slug, is_active),
       product_images (url, alt_text, is_primary, position),
       product_variants (id, sku, name, attributes, is_active),
-      inventories (quantity_available, quantity_reserved)
+      inventories (variant_id, quantity_available, quantity_reserved)
       `,
     )
     .eq('slug', sanitizedSlug)
@@ -115,31 +121,43 @@ export async function getProductBySlug(
     brands: { id: string; name: string; slug: string; is_active: boolean } | null
     product_images: Array<{ url: string; alt_text: string | null; is_primary: boolean; position: number }> | null
     product_variants: Array<{ id: string; sku: string; name: string; attributes: Record<string, string>; is_active: boolean }> | null
-    inventories: Array<{ quantity_available: number; quantity_reserved: number }> | null
+    inventories: Array<{ variant_id: string | null; quantity_available: number; quantity_reserved: number }> | null
   }
 
-  // Filtrar variantes ativas
+  // Filtrar variantes ativas. Produtos SEM nenhuma variante ativa são
+  // válidos (variant_id null no carrinho) — não retornamos 404 apenas por
+  // ausência de variantes.
   const activeVariants = (raw.product_variants ?? []).filter((v) => v.is_active)
-  if (activeVariants.length === 0) return null
 
-  // Calcular estoque real seguro (available_to_sell = Math.max(0, quantity_available - quantity_reserved))
-  let totalAvailableStock = 0
-  if (raw.inventories && raw.inventories.length > 0) {
-    const inv = raw.inventories[0]
-    totalAvailableStock = Math.max(0, (inv.quantity_available ?? 0) - (inv.quantity_reserved ?? 0))
+  // Estoque por variante (available_to_sell = max(0, available - reserved)).
+  // A chave `null` representa o estoque a nível de PRODUTO (variant_id NULL),
+  // relevante apenas quando o produto não tem variantes.
+  const stockByVariant = new Map<string | null, number>()
+  for (const inv of raw.inventories ?? []) {
+    const key = inv.variant_id ?? null
+    const usable = Math.max(0, (inv.quantity_available ?? 0) - (inv.quantity_reserved ?? 0))
+    stockByVariant.set(key, (stockByVariant.get(key) ?? 0) + usable)
   }
 
-  // Selecionar variante válida
+  // Selecionar variante válida (undefined quando o produto não tem variantes).
   let currentVariant = activeVariants[0]
   if (selectedVariantId) {
     const matched = activeVariants.find((v) => v.id === selectedVariantId)
     if (matched) currentVariant = matched
   }
 
-  // Se o cliente puder ver preços, buscar preço efetivo para a variante selecionada
+  const currentStock = currentVariant
+    ? (stockByVariant.get(currentVariant.id) ?? 0)
+    : (stockByVariant.get(null) ?? 0)
+
+  // Se o cliente puder ver preços, buscar preço efetivo: por variante quando
+  // existir, ou a nível de produto (variant_id NULL) quando não houver
+  // nenhuma variante ativa.
   let priceInfo: PriceInfo | undefined = undefined
-  if (canViewPrices && currentVariant?.id) {
-    priceInfo = await getEffectivePriceForCurrentCustomer(currentVariant.id)
+  if (canViewPrices) {
+    priceInfo = currentVariant?.id
+      ? await getEffectivePriceForCurrentCustomer(currentVariant.id)
+      : await getEffectiveProductLevelPriceForCurrentCustomer(raw.id)
   }
 
   const images = (raw.product_images ?? [])
@@ -178,10 +196,11 @@ export async function getProductBySlug(
       sku: v.sku,
       name: v.name,
       attributes: (v.attributes as Record<string, string>) ?? {},
-      availableStock: totalAvailableStock,
+      availableStock: stockByVariant.get(v.id) ?? 0,
     })),
+    currentVariantId: currentVariant?.id ?? null,
     attributes: {},
-    exactStock: canViewPrices ? totalAvailableStock : undefined,
+    exactStock: canViewPrices ? currentStock : undefined,
     canViewPrices,
     userStatus,
   }

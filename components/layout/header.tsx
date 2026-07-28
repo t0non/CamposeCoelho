@@ -20,13 +20,16 @@ import { MegaMenu } from './mega-menu'
 import { MobileNavDrawer } from './mobile-nav-drawer'
 import { CartSlideOver } from './cart-slide-over'
 import { mockDepartments } from '@/lib/mocks/mock-navigation'
+import { formatPrice } from '@/lib/utils/format'
 import type { AuthContext } from '@/types/auth.types'
+import type { CartSummary } from '@/lib/types/cart'
 
 interface HeaderProps {
   authContext?: AuthContext
+  cartSummary?: CartSummary
 }
 
-export function Header({ authContext }: HeaderProps) {
+export function Header({ authContext, cartSummary }: HeaderProps) {
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false)
   const [isCartOpen, setIsCartOpen] = useState(false)
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
@@ -35,6 +38,10 @@ export function Header({ authContext }: HeaderProps) {
   const company = authContext?.company
   const canViewPrices = Boolean(authContext?.canViewPrices)
   const userStatus = company?.status ?? 'visitor'
+
+  const cartItems = cartSummary?.items ?? []
+  const cartCount = cartSummary?.count ?? 0
+  const cartSubtotal = cartSummary?.subtotal ?? 0
 
   return (
     <>
@@ -156,16 +163,22 @@ export function Header({ authContext }: HeaderProps) {
             >
               <div className="relative">
                 <ShoppingBag className="h-5 w-5" aria-hidden="true" />
-                <span className="absolute -top-2 -right-2 flex h-4 w-4 items-center justify-center rounded-full bg-navy-900 text-[10px] font-extrabold text-white">
-                  2
-                </span>
+                {cartCount > 0 && (
+                  <span className="absolute -top-2 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-navy-900 px-1 text-[10px] font-extrabold text-white">
+                    {cartCount > 99 ? '99+' : cartCount}
+                  </span>
+                )}
               </div>
               <div className="hidden lg:flex flex-col text-left leading-none">
                 <span className="text-[10px] text-orange-100 uppercase tracking-wider font-semibold">
                   Meu Pedido
                 </span>
                 <span className="text-xs font-extrabold">
-                  {canViewPrices ? 'R$ 1.942,55' : 'Preço protegido'}
+                  {canViewPrices
+                    ? cartCount > 0
+                      ? formatPrice(cartSubtotal)
+                      : 'Vazio'
+                    : 'Preço protegido'}
                 </span>
               </div>
             </button>
@@ -218,6 +231,7 @@ export function Header({ authContext }: HeaderProps) {
         onClose={() => setIsCartOpen(false)}
         canViewPrices={canViewPrices}
         userStatus={userStatus}
+        initialItems={cartItems}
       />
     </>
   )

@@ -1,5 +1,6 @@
 'use client'
 
+import { Loader2, MousePointerClick } from 'lucide-react'
 import { formatPrice } from '@/lib/utils/format'
 import { PriceBlocked } from './price-blocked'
 import { VolumeDiscountTable } from './volume-discount-table'
@@ -8,14 +9,39 @@ import type { FullProductData } from '@/lib/data/products'
 interface ProductPricingProps {
   product: FullProductData
   quantity: number
+  /**
+   * true quando o produto tem 2+ variantes e nenhuma foi explicitamente
+   * selecionada ainda (ou a navegação para a variante escolhida ainda não
+   * concluiu) — o preço de `product` não corresponde a uma seleção
+   * confirmada e não deve ser exibido como final.
+   */
+  awaitingSelection?: boolean
+  isPending?: boolean
 }
 
-export function ProductPricing({ product, quantity }: ProductPricingProps) {
+export function ProductPricing({ product, quantity, awaitingSelection = false, isPending = false }: ProductPricingProps) {
   // Caso o usuário não tenha permissão de preços
   if (!product.canViewPrices || !product.price) {
     return (
       <div className="py-2">
         <PriceBlocked status={product.userStatus} />
+      </div>
+    )
+  }
+
+  if (awaitingSelection) {
+    return (
+      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 flex items-center gap-3">
+        {isPending ? (
+          <Loader2 className="h-5 w-5 text-slate-400 animate-spin shrink-0" />
+        ) : (
+          <MousePointerClick className="h-5 w-5 text-slate-400 shrink-0" />
+        )}
+        <p className="text-sm font-semibold text-slate-500">
+          {isPending
+            ? 'Atualizando preço da opção selecionada...'
+            : 'Selecione uma opção acima para ver o preço e adicionar ao pedido.'}
+        </p>
       </div>
     )
   }

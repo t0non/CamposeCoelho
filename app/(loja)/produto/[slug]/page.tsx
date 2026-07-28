@@ -27,6 +27,7 @@ import { BusinessRegistrationCTA } from '@/components/home/business-registration
 
 interface PageProps {
   params: Promise<{ slug: string }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
@@ -60,15 +61,24 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   }
 }
 
-export default async function ProductPage({ params: paramsPromise }: PageProps) {
+export default async function ProductPage({ params: paramsPromise, searchParams: searchParamsPromise }: PageProps) {
   const { slug } = await paramsPromise
+  const searchParams = await searchParamsPromise
+  const rawVariantParam = searchParams.variant
+  const variantParam = typeof rawVariantParam === 'string' ? rawVariantParam : undefined
+
   const authContext = await getAuthContext()
 
-  const product = await getProductBySlug(slug, authContext)
+  const product = await getProductBySlug(slug, authContext, variantParam)
 
   if (!product) {
     notFound()
   }
+
+  // Selecionado explicitamente = veio um ?variant= na URL E ele bateu com a
+  // variante que o servidor efetivamente resolveu (garbage/variante alheia
+  // cai de volta no default e não conta como seleção explícita).
+  const variantExplicitlySelected = Boolean(variantParam) && product.currentVariantId === variantParam
 
   const relatedProducts = await getRelatedProducts(product, authContext)
   const frequentlyBoughtTogether = await getFrequentlyBoughtTogether(product, authContext)
@@ -132,7 +142,10 @@ export default async function ProductPage({ params: paramsPromise }: PageProps) 
               <ProductSummary product={product} />
 
               {/* Wrapper Cliente Interativo para Quantidade & Preço Atualizado */}
-              <ProductPurchasePanelWrapper product={product} />
+              <ProductPurchasePanelWrapper
+                product={product}
+                variantExplicitlySelected={variantExplicitlySelected}
+              />
 
               {/* Simulador de Frete */}
               <ProductShippingEstimate />
