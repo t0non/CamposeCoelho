@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createAdminClient } from '@/lib/supabase/server'
+import { createClient } from '@/lib/supabase/server'
 import * as xlsx from 'xlsx'
 import crypto from 'crypto'
 
@@ -8,7 +8,7 @@ type ExcelRow = ExcelCell[]
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createAdminClient()
+    const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
 
     if (!user) {
@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
 
     // Identificar a linha de cabeçalho
     let headerRowIndex = -1
-    const expectedHeaders = ['descrição', 'descricao', 'código', 'codigo', 'cod. barras', 'cod barras', 'unidade', 'preço venda', 'preco venda', 'inativo']
+    const expectedHeaders = ['descrição', 'descricao', 'código', 'codigo', 'cod. barras', 'cod barras', 'unidade', 'preço', 'preco', 'preço venda', 'preco venda', 'valor', 'inativo']
     
     for (let i = 0; i < Math.min(rawData.length, 20); i++) {
       const row = rawData[i]
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
     const colDesc = headers.findIndex(h => h === 'descrição' || h === 'descricao')
     const colBarcode = headers.findIndex(h => h === 'cod. barras' || h === 'cod barras' || h === 'cód. barras')
     const colUnit = headers.findIndex(h => h === 'unidade')
-    const colPrice = headers.findIndex(h => h === 'preço venda' || h === 'preco venda')
+    const colPrice = headers.findIndex(h => h.includes('preço') || h.includes('preco') || h.includes('valor'))
     const colInactive = headers.findIndex(h => h === 'inativo')
 
     if (colCode === -1 || colDesc === -1) {
