@@ -1,0 +1,657 @@
+-- ============================================================
+-- 001_initial_schema.sql
+-- Schema completo da plataforma B2B atacadista (27 tabelas + RLS)
+-- ============================================================
+
+-- Habilitar extensões necessárias
+create extension if not exists "uuid-ossp";
+create extension if not exists "pg_trgm";
+
+-- ============================================================
+-- ENUMS
+-- ============================================================
+create type user_role as enum ('customer', 'seller', 'admin');
+create type company_status as enum ('pending', 'approved', 'rejected', 'suspended');
+create type profile_status as enum ('active', 'inactive', 'suspended');
+create type order_status as enum (
+  'draft', 'pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled'
+);
+create type doc_status as enum ('pending', 'approved', 'rejected');
+
+-- ============================================================
+-- 1. TABELA: price_tables (Declarada primeiro para FK de empresas)
+-- ============================================================
+create table public.price_tables (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  description text,
+  is_default  boolean not null default false,
+  is_active   boolean not null default true,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+create unique index price_tables_default_idx on public.price_tables(is_default) where is_default = true;
+
+-- ============================================================
+-- 2. TABELA: companies
+-- ============================================================
+create table public.companies (
+  id                 uuid primary key default gen_random_uuid(),
+  cnpj               text not null unique,
+  company_name       text not null, -- razão social
+  trade_name         text,          -- nome fantasia
+  state_registration text,          -- Inscrição Estadual
+  segment            text,          -- segmento
+  phone              text,          -- telefone
+  whatsapp           text,          -- WhatsApp
+  email              text,          -- e-mail
+  website            text,          -- site
+  status             company_status not null default 'pending',
+  seller_id          uuid,          -- vendedor responsável (references profiles)
+  price_table_id     uuid references public.price_tables(id) on delete set null,
+  internal_notes     text,          -- observações internas
+  approved_at        timestamptz,   -- data de aprovação
+  rejected_at        timestamptz,   -- data de recusa
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now()
+);
+
+-- ============================================================
+-- 3. TABELA: profiles
+-- ============================================================
+create table public.profiles (
+  id         uuid primary key references auth.users(id) on delete cascade,
+  full_name  text not null,
+  email      text not null,
+  phone      text,
+  role       user_role not null default 'customer',
+  company_id uuid references public.companies(id) on delete set null,
+  avatar_url text,
+  status     profile_status not null default 'active',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- Adicionar FK de seller_id em companies após criação de profiles
+alter table public.companies add constraint companies_seller_id_fkey foreign key (seller_id) references public.profiles(id) on delete set null;
+
+-- Trigger para auto-criar profile no cadastro Supabase Auth
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.profiles (id, full_name, email, role)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data->>'full_name', new.email),
+    new.email,
+    coalesce((new.raw_user_meta_data->>'role')::user_role, 'customer')
+  );
+  return new;
+end;
+$$;
+
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();
+
+-- ============================================================
+-- 4. TABELA: company_members
+-- ============================================================
+create table public.company_members (
+  id         uuid primary key default gen_random_uuid(),
+  company_id uuid not null references public.companies(id) on delete cascade,
+  profile_id uuid not null references public.profiles(id) on delete cascade,
+  role       text not null default 'buyer', -- 'owner', 'buyer', 'financial'
+  is_primary boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(company_id, profile_id)
+);
+
+-- ============================================================
+-- 5. TABELA: company_documents
+-- ============================================================
+create table public.company_documents (
+  id            uuid primary key default gen_random_uuid(),
+  company_id    uuid not null references public.companies(id) on delete cascade,
+  document_type text not null, -- 'cnpj_card', 'social_contract', 'state_reg'
+  file_path     text not null,
+  file_name     text not null,
+  status        doc_status not null default 'pending',
+  notes         text,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+
+-- ============================================================
+-- 6. TABELA: addresses
+-- ============================================================
+create table public.addresses (
+  id           uuid primary key default gen_random_uuid(),
+  profile_id   uuid references public.profiles(id) on delete cascade,
+  company_id   uuid references public.companies(id) on delete cascade,
+  label        text not null default 'Principal',
+  zip_code     text not null,
+  street       text not null,
+  number       text not null,
+  complement   text,
+  neighborhood text not null,
+  city         text not null,
+  state        char(2) not null,
+  is_default   boolean not null default false,
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+
+-- ============================================================
+-- 7. TABELA: categories
+-- ============================================================
+create table public.categories (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  slug        text not null unique,
+  description text,
+  image_url   text,
+  parent_id   uuid references public.categories(id) on delete set null,
+  position    integer not null default 0,
+  is_active   boolean not null default true,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+-- ============================================================
+-- 8. TABELA: brands
+-- ============================================================
+create table public.brands (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null,
+  slug       text not null unique,
+  logo_url   text,
+  is_active  boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- ============================================================
+-- 9. TABELA: products
+-- ============================================================
+create table public.products (
+  id                uuid primary key default gen_random_uuid(),
+  sku               text not null unique,
+  name              text not null,
+  slug              text not null unique,
+  description       text,
+  category_id       uuid references public.categories(id) on delete set null,
+  brand_id          uuid references public.brands(id) on delete set null,
+  unit              text not null default 'UN',
+  min_quantity      integer not null default 1,
+  multiple_quantity integer not null default 1,
+  weight_grams      numeric,
+  is_active         boolean not null default true,
+  created_at        timestamptz not null default now(),
+  updated_at        timestamptz not null default now()
+);
+
+create index products_category_id_idx on public.products(category_id);
+create index products_brand_id_idx on public.products(brand_id);
+create index products_slug_idx on public.products(slug);
+create index products_name_trgm_idx on public.products using gin(name gin_trgm_ops);
+
+-- ============================================================
+-- 10. TABELA: product_images
+-- ============================================================
+create table public.product_images (
+  id         uuid primary key default gen_random_uuid(),
+  product_id uuid not null references public.products(id) on delete cascade,
+  url        text not null,
+  alt_text   text,
+  position   integer not null default 0,
+  is_primary boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+-- ============================================================
+-- 11. TABELA: product_variants
+-- ============================================================
+create table public.product_variants (
+  id         uuid primary key default gen_random_uuid(),
+  product_id uuid not null references public.products(id) on delete cascade,
+  sku        text not null unique,
+  name       text not null,
+  attributes jsonb not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- ============================================================
+-- 12. TABELA: inventories
+-- ============================================================
+create table public.inventories (
+  id                 uuid primary key default gen_random_uuid(),
+  product_id         uuid not null references public.products(id) on delete cascade,
+  variant_id         uuid references public.product_variants(id) on delete cascade,
+  quantity_available integer not null default 0,
+  quantity_reserved  integer not null default 0,
+  min_stock_alert    integer not null default 5,
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now(),
+  unique (product_id, variant_id)
+);
+
+-- ============================================================
+-- 13. TABELA: price_table_products
+-- ============================================================
+create table public.price_table_products (
+  id                  uuid primary key default gen_random_uuid(),
+  price_table_id      uuid not null references public.price_tables(id) on delete cascade,
+  product_id          uuid not null references public.products(id) on delete cascade,
+  variant_id          uuid references public.product_variants(id) on delete cascade,
+  unit_price          numeric not null check (unit_price > 0),
+  promotional_price   numeric check (promotional_price > 0),
+  promotion_starts_at timestamptz,
+  promotion_ends_at   timestamptz,
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now()
+);
+
+create index price_table_products_product_idx on public.price_table_products(product_id);
+
+-- ============================================================
+-- 14. TABELA: banners
+-- ============================================================
+create table public.banners (
+  id         uuid primary key default gen_random_uuid(),
+  title      text not null,
+  subtitle   text,
+  image_url  text not null,
+  link_url   text,
+  position   integer not null default 0,
+  is_active  boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- ============================================================
+-- 15. TABELA: collections
+-- ============================================================
+create table public.collections (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  slug        text not null unique,
+  description text,
+  banner_url  text,
+  is_active   boolean not null default true,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+
+-- ============================================================
+-- 16. TABELA: collection_products
+-- ============================================================
+create table public.collection_products (
+  id            uuid primary key default gen_random_uuid(),
+  collection_id uuid not null references public.collections(id) on delete cascade,
+  product_id    uuid not null references public.products(id) on delete cascade,
+  position      integer not null default 0,
+  created_at    timestamptz not null default now(),
+  unique (collection_id, product_id)
+);
+
+-- ============================================================
+-- 17. TABELA: favorites
+-- ============================================================
+create table public.favorites (
+  id         uuid primary key default gen_random_uuid(),
+  profile_id uuid not null references public.profiles(id) on delete cascade,
+  product_id uuid not null references public.products(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  unique (profile_id, product_id)
+);
+
+-- ============================================================
+-- 18. TABELA: carts
+-- ============================================================
+create table public.carts (
+  id         uuid primary key default gen_random_uuid(),
+  profile_id uuid not null references public.profiles(id) on delete cascade,
+  company_id uuid references public.companies(id) on delete cascade,
+  status     text not null default 'active', -- 'active', 'abandoned', 'converted'
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- ============================================================
+-- 19. TABELA: cart_items
+-- ============================================================
+create table public.cart_items (
+  id         uuid primary key default gen_random_uuid(),
+  cart_id    uuid references public.carts(id) on delete cascade,
+  profile_id uuid not null references public.profiles(id) on delete cascade,
+  product_id uuid not null references public.products(id) on delete cascade,
+  variant_id uuid references public.product_variants(id) on delete cascade,
+  quantity   integer not null check (quantity > 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- ============================================================
+-- 20. TABELA: shipping_methods
+-- ============================================================
+create table public.shipping_methods (
+  id             uuid primary key default gen_random_uuid(),
+  name           text not null,
+  code           text not null unique,
+  description    text,
+  estimated_days integer default 5,
+  is_active      boolean not null default true,
+  created_at     timestamptz not null default now(),
+  updated_at     timestamptz not null default now()
+);
+
+-- ============================================================
+-- 21. TABELA: payment_terms
+-- ============================================================
+create table public.payment_terms (
+  id              uuid primary key default gen_random_uuid(),
+  name            text not null,
+  code            text not null unique,
+  days_to_pay     integer not null default 0,
+  installments    integer not null default 1,
+  min_order_value numeric not null default 0,
+  is_active       boolean not null default true,
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now()
+);
+
+-- ============================================================
+-- 22. TABELA: orders
+-- ============================================================
+create sequence if not exists order_number_seq start 1;
+
+create table public.orders (
+  id                  uuid primary key default gen_random_uuid(),
+  order_number        text not null unique default 'PD-' || lpad(nextval('order_number_seq')::text, 6, '0'),
+  company_id          uuid not null references public.companies(id),
+  profile_id          uuid not null references public.profiles(id),
+  seller_id           uuid references public.profiles(id),
+  status              order_status not null default 'draft',
+  shipping_address_id uuid references public.addresses(id),
+  shipping_method_id  uuid references public.shipping_methods(id),
+  payment_term_id     uuid references public.payment_terms(id),
+  subtotal            numeric not null default 0,
+  discount            numeric not null default 0,
+  shipping_cost       numeric not null default 0,
+  total               numeric not null default 0,
+  notes               text,
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now()
+);
+
+-- ============================================================
+-- 23. TABELA: order_items
+-- ============================================================
+create table public.order_items (
+  id          uuid primary key default gen_random_uuid(),
+  order_id    uuid not null references public.orders(id) on delete cascade,
+  product_id  uuid not null references public.products(id),
+  variant_id  uuid references public.product_variants(id),
+  quantity    integer not null check (quantity > 0),
+  unit_price  numeric not null,
+  total_price numeric not null,
+  created_at  timestamptz not null default now()
+);
+
+-- ============================================================
+-- 24. TABELA: order_status_history
+-- ============================================================
+create table public.order_status_history (
+  id         uuid primary key default gen_random_uuid(),
+  order_id   uuid not null references public.orders(id) on delete cascade,
+  status     order_status not null,
+  notes      text,
+  created_by uuid references public.profiles(id),
+  created_at timestamptz not null default now()
+);
+
+-- ============================================================
+-- 25. TABELA: notifications
+-- ============================================================
+create table public.notifications (
+  id         uuid primary key default gen_random_uuid(),
+  profile_id uuid not null references public.profiles(id) on delete cascade,
+  title      text not null,
+  message    text not null,
+  type       text not null default 'info',
+  read_at    timestamptz,
+  link_url   text,
+  created_at timestamptz not null default now()
+);
+
+-- ============================================================
+-- 26. TABELA: newsletter_leads
+-- ============================================================
+create table public.newsletter_leads (
+  id           uuid primary key default gen_random_uuid(),
+  email        text not null unique,
+  name         text,
+  company_name text,
+  created_at   timestamptz not null default now()
+);
+
+-- ============================================================
+-- 27. TABELA: audit_logs
+-- ============================================================
+create table public.audit_logs (
+  id           uuid primary key default gen_random_uuid(),
+  actor_id     uuid references public.profiles(id),
+  action       text not null,
+  target_table text not null,
+  target_id    uuid,
+  payload      jsonb,
+  created_at   timestamptz not null default now()
+);
+
+-- ============================================================
+-- ROW LEVEL SECURITY (RLS) & POLICIES
+-- ============================================================
+
+alter table public.profiles              enable row level security;
+alter table public.companies             enable row level security;
+alter table public.company_members       enable row level security;
+alter table public.company_documents     enable row level security;
+alter table public.addresses             enable row level security;
+alter table public.categories            enable row level security;
+alter table public.brands                enable row level security;
+alter table public.products              enable row level security;
+alter table public.product_images        enable row level security;
+alter table public.product_variants      enable row level security;
+alter table public.inventories           enable row level security;
+alter table public.price_tables          enable row level security;
+alter table public.price_table_products  enable row level security;
+alter table public.banners               enable row level security;
+alter table public.collections           enable row level security;
+alter table public.collection_products   enable row level security;
+alter table public.favorites             enable row level security;
+alter table public.carts                 enable row level security;
+alter table public.cart_items            enable row level security;
+alter table public.orders                enable row level security;
+alter table public.order_items           enable row level security;
+alter table public.order_status_history  enable row level security;
+alter table public.shipping_methods      enable row level security;
+alter table public.payment_terms         enable row level security;
+alter table public.notifications         enable row level security;
+alter table public.newsletter_leads      enable row level security;
+alter table public.audit_logs            enable row level security;
+
+-- ============================================================
+-- HELPER FUNCTIONS
+-- ============================================================
+create or replace function public.is_admin()
+returns boolean language sql stable security definer as $$
+  select exists (
+    select 1 from public.profiles
+    where id = auth.uid() and role = 'admin'
+  );
+$$;
+
+create or replace function public.is_seller()
+returns boolean language sql stable security definer as $$
+  select exists (
+    select 1 from public.profiles
+    where id = auth.uid() and role = 'seller'
+  );
+$$;
+
+create or replace function public.is_approved()
+returns boolean language sql stable security definer as $$
+  select exists (
+    select 1 from public.profiles p
+    left join public.companies c on c.id = p.company_id
+    where p.id = auth.uid()
+      and (
+        p.role in ('admin', 'seller')
+        or (p.role = 'customer' and c.status = 'approved')
+      )
+  );
+$$;
+
+-- ============================================================
+-- RLS POLICIES SPECIFIC TO SECURITY REQUIREMENTS
+-- ============================================================
+
+-- PROFILES
+create policy "Usuário lê o próprio perfil ou perfis permitidos"
+  on public.profiles for select
+  using (
+    auth.uid() = id
+    or public.is_admin()
+    or (
+      public.is_seller() and exists (
+        select 1 from public.companies c
+        where c.seller_id = auth.uid() and c.id = profiles.company_id
+      )
+    )
+  );
+
+create policy "Usuário atualiza o próprio perfil sem alterar role/status"
+  on public.profiles for update
+  using (auth.uid() = id or public.is_admin());
+
+-- COMPANIES
+create policy "Cliente lê apenas sua própria empresa, vendedor lê atribuídos, admin lê todas"
+  on public.companies for select
+  using (
+    public.is_admin()
+    or seller_id = auth.uid()
+    or exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid() and (p.company_id = companies.id or p.id in (select profile_id from company_members where company_id = companies.id))
+    )
+  );
+
+create policy "Cliente cria empresa"
+  on public.companies for insert
+  with check (auth.role() = 'authenticated');
+
+create policy "Apenas Admin atualiza status ou observações de empresas"
+  on public.companies for update
+  using (public.is_admin());
+
+-- COMPANY DOCUMENTS (NÃO PÚBLICOS)
+create policy "Apenas empresa dona e admin leem documentos"
+  on public.company_documents for select
+  using (
+    public.is_admin()
+    or exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid() and p.company_id = company_documents.company_id
+    )
+  );
+
+create policy "Empresa faz upload dos próprios documentos"
+  on public.company_documents for insert
+  with check (
+    exists (
+      select 1 from public.profiles p
+      where p.id = auth.uid() and p.company_id = company_documents.company_id
+    )
+  );
+
+-- ADDRESSES
+create policy "Cliente gerencia apenas seus endereços"
+  on public.addresses for all
+  using (
+    auth.uid() = profile_id
+    or public.is_admin()
+  );
+
+-- PRICE TABLES & PREÇOS (SOMENTE USUÁRIOS APROVADOS OU ADMIN)
+create policy "Apenas usuários aprovados veem tabelas de preço"
+  on public.price_tables for select
+  using (public.is_approved());
+
+create policy "Admin gerencia tabelas de preço"
+  on public.price_tables for all
+  using (public.is_admin());
+
+create policy "Apenas usuários aprovados veem preços de produtos"
+  on public.price_table_products for select
+  using (public.is_approved());
+
+create policy "Admin gerencia preços de produtos"
+  on public.price_table_products for all
+  using (public.is_admin());
+
+-- PRODUCTS, CATEGORIES, BRANDS (PÚBLICOS SEM PREÇO)
+create policy "Produtos públicos para todos" on public.products for select using (is_active = true or public.is_admin());
+create policy "Admin gerencia produtos" on public.products for all using (public.is_admin());
+create policy "Imagens de produtos para todos" on public.product_images for select using (true);
+create policy "Variantes de produtos para todos" on public.product_variants for select using (true);
+create policy "Categorias para todos" on public.categories for select using (is_active = true or public.is_admin());
+create policy "Marcas para todos" on public.brands for select using (is_active = true or public.is_admin());
+create policy "Coleções para todos" on public.collections for select using (is_active = true or public.is_admin());
+create policy "Produtos de coleções para todos" on public.collection_products for select using (true);
+create policy "Banners para todos" on public.banners for select using (is_active = true or public.is_admin());
+create policy "Métodos de envio para todos" on public.shipping_methods for select using (is_active = true or public.is_admin());
+create policy "Condições de pagamento para todos" on public.payment_terms for select using (is_active = true or public.is_admin());
+
+-- INVENTORIES
+create policy "Aprovados veem inventário" on public.inventories for select using (public.is_approved());
+create policy "Admin gerencia inventário" on public.inventories for all using (public.is_admin());
+
+-- ORDERS
+create policy "Cliente lê apenas seus pedidos, vendedor lê atribuídos, admin lê todos"
+  on public.orders for select
+  using (
+    public.is_admin()
+    or seller_id = auth.uid()
+    or (profile_id = auth.uid() and public.is_approved())
+  );
+
+create policy "Cliente aprovado cria pedidos"
+  on public.orders for insert
+  with check (profile_id = auth.uid() and public.is_approved());
+
+create policy "Admin gerencia pedidos" on public.orders for all using (public.is_admin());
+
+-- ORDER ITEMS
+create policy "Usuário lê itens de seus pedidos"
+  on public.order_items for select
+  using (
+    public.is_admin()
+    or exists (
+      select 1 from public.orders o
+      where o.id = order_items.order_id
+        and (o.profile_id = auth.uid() or o.seller_id = auth.uid())
+    )
+  );
+
+-- FAVORITES, CARTS, CART ITEMS
+create policy "Usuário gerencia próprios favoritos" on public.favorites for all using (profile_id = auth.uid());
+create policy "Usuário gerencia próprio carrinho" on public.carts for all using (profile_id = auth.uid());
+create policy "Usuário gerencia itens do seu carrinho" on public.cart_items for all using (profile_id = auth.uid());
+
+-- NOTIFICATIONS & AUDIT LOGS
+create policy "Usuário vê suas notificações" on public.notifications for select using (profile_id = auth.uid());
+create policy "Admin vê audit logs" on public.audit_logs for select using (public.is_admin());

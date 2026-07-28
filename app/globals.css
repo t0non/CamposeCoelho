@@ -1,0 +1,110 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+:root {
+  /* Cores Principais - Importec Style */
+  --primary-orange: #e8420a;
+  --primary-orange-hover: #c93808;
+  --primary-orange-light: #fff3ee;
+  
+  --primary-blue: #0056b3;
+  --primary-blue-hover: #004494;
+  --primary-blue-light: #eff6ff;
+
+  --bg-app: #f5f5f5;
+  --bg-surface: #ffffff;
+  
+  --text-main: #333333;
+  --text-muted: #666666;
+  --text-light: #999999;
+  
+  --border-light: #e0e0e0;
+  --border-subtle: #f0f0f0;
+
+  --header-bg: #ffffff;
+  --header-nav-bg: #0056b3;
+  --topbar-bg: #e8420a;
+
+  --footer-bg: #1e1e1e;
+  --footer-secondary: #2a2a2a;
+
+  --state-success: #28a745;
+  --state-success-bg: #d4edda;
+  --state-warning: #ffc107;
+  --state-danger: #dc3545;
+  --state-info: #17a2b8;
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+
+  --max-width-site: 87.5rem; /* 1400px */
+}
+
+@theme inline {
+  --color-orange-500: var(--primary-orange);
+  --color-orange-600: var(--primary-orange-hover);
+  --color-orange-50: var(--primary-orange-light);
+
+  --color-[#e8420a]: #e8420a;
+  --color-[#0056b3]: #0056b3;
+
+  --color-blue-600: var(--primary-blue);
+  --color-blue-700: var(--primary-blue-hover);
+  --color-blue-50: var(--primary-blue-light);
+
+  --color-navy-900: #1e1e1e;
+  --color-navy-800: #2a2a2a;
+  --color-navy-50: #f5f5f5;
+
+  --font-sans: 'Poppins', system-ui, -apple-system, sans-serif;
+}
+
+body {
+  background-color: var(--bg-app);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Prevenir rolagem da página quando Modal ou Drawer está aberto */
+body.overflow-hidden {
+  overflow: hidden;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Hero Carousel */
+.hero-carousel-slide {
+  transition: transform 0.5s ease-in-out;
+}
+
+/* Product card hover */
+.product-card:hover .product-card-image {
+  transform: scale(1.05);
+}
+
+/* Announcement bar */
+.announcement-bar {
+  background-color: var(--topbar-bg);
+  color: white;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-align: center;
+  padding: 0.375rem 1rem;
+}
