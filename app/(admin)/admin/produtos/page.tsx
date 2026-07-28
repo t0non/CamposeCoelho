@@ -61,10 +61,15 @@ export default async function AdminProductsPage({
         title="Produtos"
         description="Gerencie os produtos do seu catálogo B2B."
         action={
-          <Link href="/admin/produtos/novo" className="inline-flex items-center justify-center gap-2 font-medium bg-navy-900 text-white hover:bg-navy-800 active:bg-slate-950 h-10 px-4 text-sm rounded-lg">
-            <Plus className="h-4 w-4" />
-            Novo Produto
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link href="/admin/produtos/importar?mode=import_update" className="inline-flex items-center justify-center gap-2 font-medium bg-slate-800 text-white hover:bg-slate-700 h-10 px-4 text-sm rounded-lg">
+              Importar planilha
+            </Link>
+            <Link href="/admin/produtos/novo" className="inline-flex items-center justify-center gap-2 font-medium bg-navy-900 text-white hover:bg-navy-800 active:bg-slate-950 h-10 px-4 text-sm rounded-lg">
+              <Plus className="h-4 w-4" />
+              Novo Produto
+            </Link>
+          </div>
         }
       />
 
