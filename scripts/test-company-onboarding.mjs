@@ -419,7 +419,7 @@ async function runTests() {
   // ── CENÁRIO 14: Customer tenta alterar status da empresa diretamente ──
   try {
     const { client } = await signIn('aprovado@cliente.com.br')
-    const { error } = await client.from('companies').update({ status: 'approved' }).eq('id', approvedCompanyId)
+    const { error } = await client.from('companies').update({ status: 'rejected' }).eq('id', approvedCompanyId)
     if (error) pass('14. Customer bloqueado de alterar status', 'Empresa vinculada', 'aprovado@cliente.com.br', 'UPDATE companies.status', 'Bloqueado por RLS / REVOKE', `Bloqueado: ${error.message.slice(0, 50)}`, '0 alterações de status')
     else fail('14. Customer bloqueado de alterar status', 'Empresa vinculada', 'aprovado@cliente.com.br', 'UPDATE companies.status', 'Bloqueado', 'PERMITIDO — falha grave!', 'Status alterado indevidamente')
   } catch (e) { fail('14. Customer não altera status', 'Empresa vinculada', 'aprovado@cliente.com.br', 'UPDATE status', 'Bloqueado', 'Exceção', e.message) }
