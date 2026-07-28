@@ -1,4 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
+import { SupabaseClient } from '@supabase/supabase-js'
+import { Database } from '@/types/database.types'
 import type { AuthContext } from '@/types/auth.types'
 import type { CatalogProduct, PriceInfo } from '@/types/product.types'
 import { getProductImageUrl } from '@/lib/utils/storage-url'

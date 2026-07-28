@@ -6,16 +6,7 @@ import { BannerList } from '@/components/admin/banners/banner-list'
 import { BannerForm } from '@/components/admin/banners/banner-form'
 import { Plus } from 'lucide-react'
 
-type Banner = {
-  id: string
-  title: string
-  subtitle: string | null
-  image_url: string
-  mobile_image_url: string | null
-  is_active: boolean
-  link_url: string | null
-  position: number
-}
+import { Banner } from '@/types/banner.types'
 
 export default function AdminBannersPage() {
   const [banners, setBanners] = useState<Banner[]>([])

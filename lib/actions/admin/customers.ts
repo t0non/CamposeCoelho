@@ -1,6 +1,8 @@
 'use server'
 
 import { createClient, createAdminClient } from '@/lib/supabase/server'
+import { SupabaseClient } from '@supabase/supabase-js'
+import { Database } from '@/types/database.types'
 import { revalidatePath } from 'next/cache'
 
 export async function getCustomers(search?: string, status?: string) {
@@ -108,7 +110,7 @@ export async function updateCustomerStatus(companyId: string, status: 'approved'
   // 2. Usar o cliente de Admin (service_role) para fazer o update ignorando as barreiras do RLS
   const adminClient = await createAdminClient()
 
-  const updateData: any = { 
+  const updateData: Database['public']['Tables']['companies']['Update'] = { 
     status,
     internal_notes: notes || null
   }

@@ -5,14 +5,7 @@ import { updateBannerOrder, deleteBanner } from '@/lib/actions/admin/banners'
 import { ArrowUp, ArrowDown, Edit, Trash2, Image as ImageIcon } from 'lucide-react'
 import Image from 'next/image'
 
-type Banner = {
-  id: string
-  title: string
-  image_url: string
-  mobile_image_url: string | null
-  is_active: boolean
-  position: number
-}
+import { Banner } from '@/types/banner.types'
 
 interface BannerListProps {
   banners: Banner[]

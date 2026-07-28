@@ -1,13 +1,14 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { cookies, headers } from 'next/headers'
 import type { Database } from '@/types/database.types'
+import { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from './admin'
 
 /**
  * Cliente Supabase para Server Components, Server Actions e Route Handlers.
  * Usa cookies para manter a sessão do usuário autenticado.
  */
-export async function createClient() {
+export async function createClient(): Promise<SupabaseClient<Database, "public", any>> {
   const cookieStore = await cookies()
   const headerStore = await headers()
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -15,7 +16,7 @@ export async function createClient() {
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
-  return createServerClient<Database>(
+  return createServerClient<Database, 'public'>(
     supabaseUrl,
     supabaseAnonKey,
     {
@@ -44,7 +45,7 @@ export async function createClient() {
       },
       global: {
         headers: {
-          ...(headerStore.get('authorization') ? { Authorization: headerStore.get('authorization')! } : {}),
+          Authorization: headerStore.get('authorization') ?? '',
         },
       },
     },

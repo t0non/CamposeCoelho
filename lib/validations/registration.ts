@@ -10,16 +10,16 @@ export const companyStepSchema = z
       .refine((val) => validateCNPJ(val), 'CNPJ inválido (verifique os dígitos).'),
     companyName: z.string().min(3, 'Razão social deve ter no mínimo 3 caracteres.'),
     tradingName: z.string().min(2, 'Nome fantasia é obrigatório.'),
-    stateRegistration: z.string().optional().default(''),
-    isStateRegistrationExempt: z.boolean().default(false),
+    stateRegistration: z.string().optional(),
+    isStateRegistrationExempt: z.boolean().optional(),
     segment: z.string().min(1, 'Selecione o segmento de atuação.'),
     businessType: z.string().min(1, 'Selecione o tipo de negócio.'),
     employeeCount: z.string().min(1, 'Selecione a faixa de funcionários.'),
     phone: z.string().min(10, 'Telefone comercial inválido.'),
     whatsapp: z.string().min(10, 'WhatsApp comercial inválido.'),
     email: z.string().email('E-mail comercial inválido.'),
-    website: z.string().optional().default(''),
-    foundationYear: z.string().optional().default(''),
+    website: z.string().url('URL inválida.').optional().or(z.literal('')),
+    foundationYear: z.string().regex(/^\d{4}$/, 'Ano inválido.').optional().or(z.literal('')),
   })
   .refine(
     (data) => data.isStateRegistrationExempt || (data.stateRegistration && data.stateRegistration.trim().length > 0),
@@ -40,7 +40,7 @@ export const responsibleStepSchema = z
       .min(1, 'CPF é obrigatório.')
       .refine((val) => validateCPF(val), 'CPF inválido (verifique os dígitos).'),
     role: z.string().min(1, 'Selecione o cargo.'),
-    department: z.string().optional().default(''),
+    department: z.string().optional(),
     email: z.string().email('E-mail pessoal/corporativo inválido.'),
     phone: z.string().min(10, 'Telefone inválido.'),
     whatsapp: z.string().min(10, 'WhatsApp inválido.'),
@@ -65,20 +65,20 @@ export const addressSchema = z.object({
   cep: z.string().min(8, 'CEP inválido (8 dígitos).'),
   street: z.string().min(3, 'Logradouro é obrigatório.'),
   number: z.string().min(1, 'Número é obrigatório.'),
-  complement: z.string().optional().default(''),
+  complement: z.string().optional(),
   neighborhood: z.string().min(2, 'Bairro é obrigatório.'),
   city: z.string().min(2, 'Cidade é obrigatória.'),
   state: z.string().length(2, 'UF inválida (2 letras).'),
-  referencePoint: z.string().optional().default(''),
+  referencePoint: z.string().optional(),
 })
 
 // 4. Schema do Conjunto de Endereços
 export const addressesStepSchema = z.object({
   fiscal: addressSchema,
   shipping: addressSchema,
-  isShippingSameAsFiscal: z.boolean().default(true),
+  isShippingSameAsFiscal: z.boolean().optional(),
   billing: addressSchema,
-  isBillingSameAsFiscal: z.boolean().default(true),
+  isBillingSameAsFiscal: z.boolean().optional(),
 })
 
 export type AddressesStepFormValues = z.infer<typeof addressesStepSchema>
@@ -86,14 +86,14 @@ export type AddressesStepFormValues = z.infer<typeof addressesStepSchema>
 // 5. Schema dos Interesses
 export const commercialInterestsStepSchema = z.object({
   categories: z.array(z.string()).min(1, 'Selecione pelo menos uma categoria de interesse.'),
-  mainProducts: z.string().optional().default(''),
+  mainProducts: z.string().optional(),
   purchaseFrequency: z.string().min(1, 'Selecione a frequência estimada de compra.'),
   averageOrderValue: z.string().min(1, 'Selecione a faixa média de valor.'),
   storeCount: z.string().min(1, 'Informe o número de lojas.'),
   operatingStates: z.array(z.string()).min(1, 'Selecione pelo menos um estado de atuação.'),
   salesChannel: z.string().min(1, 'Selecione o canal principal de vendas.'),
   howDidYouHear: z.string().min(1, 'Informe como nos conheceu.'),
-  notes: z.string().optional().default(''),
+  notes: z.string().optional(),
 })
 
 export type CommercialInterestsStepFormValues = z.infer<typeof commercialInterestsStepSchema>
@@ -108,9 +108,9 @@ export const consentsStepSchema = z.object({
   declarationOfTruth: z
     .boolean()
     .refine((val) => val === true, 'Declare que as informações são verdadeiras.'),
-  receiveNewsletter: z.boolean().default(false),
-  allowWhatsAppContact: z.boolean().default(false),
-  allowEmailCampaigns: z.boolean().default(false),
+  receiveNewsletter: z.boolean().optional(),
+  allowWhatsAppContact: z.boolean().optional(),
+  allowEmailCampaigns: z.boolean().optional(),
 })
 
 export type ConsentsStepFormValues = z.infer<typeof consentsStepSchema>
@@ -143,7 +143,7 @@ export const fullRegistrationSchema = z.object({
   company: companyStepSchema,
   responsible: responsibleStepSchema,
   addresses: addressesStepSchema,
-  documents: z.array(z.any()).optional().default([]), // The file upload logic handles this manually in the component for now or via a specific schema
+  documents: z.array(z.unknown()).optional(), // The file upload logic handles this manually in the component for now or via a specific schema
   interests: commercialInterestsStepSchema,
   consents: consentsStepSchema,
 })

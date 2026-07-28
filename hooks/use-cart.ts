@@ -44,9 +44,10 @@ export function useCart() {
       .from('cart_items')
       .select(
         `
-        id, quantity,
+        id, quantity, product_id,
         product:products!cart_items_product_id_fkey(
-          id, name, slug, images, unit, min_quantity, multiple_quantity
+          id, name, slug, unit, min_quantity, multiple_quantity,
+          product_images(image_url, is_primary)
         )
       `,
       )
@@ -56,7 +57,24 @@ export function useCart() {
     if (fetchError) {
       setError('Erro ao carregar o carrinho')
     } else {
-      setItems((data as CartItem[]) ?? [])
+      const mappedItems: CartItem[] = (data || []).map((item) => {
+        const prod = Array.isArray(item.product) ? item.product[0] : item.product
+        return {
+          id: item.id,
+          product_id: item.product_id,
+          quantity: item.quantity,
+          product: prod ? {
+            id: prod.id,
+            name: prod.name,
+            slug: prod.slug,
+            unit: prod.unit,
+            min_quantity: prod.min_quantity,
+            multiple_quantity: prod.multiple_quantity,
+            images: prod.product_images?.map((img: { image_url: string }) => img.image_url) || []
+          } : null
+        }
+      })
+      setItems(mappedItems)
     }
     setLoading(false)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps

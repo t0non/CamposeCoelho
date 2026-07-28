@@ -105,14 +105,13 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  const { pathname } = request.nextUrl
-
   if (!user && request.headers.get('authorization')?.startsWith('Bearer ')) {
     const token = request.headers.get('authorization')!.replace('Bearer ', '')
     const { data } = await supabase.auth.getUser(token)
     user = data.user
   }
 
+  const { pathname } = request.nextUrl
 
   // ──────────────────────────────────────────────────────
   // Rotas de status — exigem autenticação, mas não role específica
@@ -137,7 +136,7 @@ export async function proxy(request: NextRequest) {
     }
 
     // Verificação leve no proxy — layout faz verificação completa
-    const { data: profileData, error: profileError } = await supabase
+    const { data: profileData } = await supabase
       .from('profiles')
       .select('role')
       .eq('id', user.id)
@@ -145,11 +144,8 @@ export async function proxy(request: NextRequest) {
 
     const role = (profileData as Pick<ProfileRow, 'role'> | null)?.role
 
-    console.log('[PROXY] /admin check. User:', user.id, 'Role fetched:', role, 'Error:', profileError)
-
     if (role !== 'admin') {
       // Redireciona para o destino correto sem expor o motivo
-      console.log('[PROXY] Redirecting to / because role is not admin')
       return NextResponse.redirect(new URL('/', request.url))
     }
 

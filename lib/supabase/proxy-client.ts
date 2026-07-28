@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { type NextRequest, NextResponse } from 'next/server'
 import type { Database } from '@/types/database.types'
+import { SupabaseClient } from '@supabase/supabase-js'
 
 /**
  * Cria um cliente Supabase para uso dentro do proxy.ts.
@@ -9,13 +10,13 @@ import type { Database } from '@/types/database.types'
 export function createProxyClient(
   request: NextRequest,
   response: NextResponse,
-) {
+): SupabaseClient<Database, "public", any> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
   const supabaseAnonKey =
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
-  return createServerClient<Database>(
+  return createServerClient<Database, 'public'>(
     supabaseUrl,
     supabaseAnonKey,
     {
@@ -34,7 +35,7 @@ export function createProxyClient(
       },
       global: {
         headers: {
-          ...(request.headers.get('authorization') ? { Authorization: request.headers.get('authorization')! } : {}),
+          Authorization: request.headers.get('authorization') ?? '',
         },
       },
     },

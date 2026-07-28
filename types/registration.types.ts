@@ -90,4 +90,5 @@ export interface RegistrationSubmitResult {
   protocol: string
   submittedAt: string
   message: string
+  error?: string
 }

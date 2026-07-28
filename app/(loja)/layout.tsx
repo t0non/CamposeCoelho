@@ -31,7 +31,7 @@ export default async function LojaLayout({
   const cartSummary = authContext.user ? await getActiveCartSummary(null) : emptyCart
 
   return (
-    <div className="flex min-h-screen flex-col" style={{ backgroundColor: '#f5f5f5' }}>
+    <div className="flex min-h-screen flex-col bg-slate-50">
       <Header authContext={authContext} cartSummary={cartSummary} />
       <main className="flex-1">{children}</main>
       <Footer />

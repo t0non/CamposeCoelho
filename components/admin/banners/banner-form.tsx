@@ -5,16 +5,7 @@ import { saveBanner, uploadBannerImage } from '@/lib/actions/admin/banners'
 import { Upload, X } from 'lucide-react'
 import Image from 'next/image'
 
-type Banner = {
-  id?: string
-  title: string
-  subtitle: string | null
-  image_url: string
-  mobile_image_url: string | null
-  is_active: boolean
-  link_url: string | null
-  position: number
-}
+import { Banner } from '@/types/banner.types'
 
 interface BannerFormProps {
   initialData?: Banner
@@ -22,7 +13,7 @@ interface BannerFormProps {
 }
 
 export function BannerForm({ initialData, onClose }: BannerFormProps) {
-  const [formData, setFormData] = useState<Banner>(
+  const [formData, setFormData] = useState<Partial<Banner>>(
     initialData || {
       title: '',
       subtitle: '',
@@ -82,9 +73,14 @@ export function BannerForm({ initialData, onClose }: BannerFormProps) {
       }
 
       const res = await saveBanner({
-        ...formData,
-        image_url: finalImageUrl,
-        mobile_image_url: finalMobileUrl
+        id: formData.id,
+        title: formData.title || '',
+        subtitle: formData.subtitle || null,
+        image_url: finalImageUrl || '',
+        mobile_image_url: finalMobileUrl || null,
+        link_url: formData.link_url || null,
+        is_active: formData.is_active ?? true,
+        position: formData.position || 0
       })
 
       if (res.error) throw new Error(res.error)
@@ -125,7 +121,7 @@ export function BannerForm({ initialData, onClose }: BannerFormProps) {
               />
               {(desktopFile || formData.image_url) ? (
                 <Image 
-                  src={desktopFile ? URL.createObjectURL(desktopFile) : formData.image_url}
+                  src={desktopFile ? URL.createObjectURL(desktopFile) : (formData.image_url || '')}
                   alt="Desktop Preview"
                   fill
                   className="object-cover"
@@ -174,7 +170,7 @@ export function BannerForm({ initialData, onClose }: BannerFormProps) {
             <input 
               type="text" 
               required
-              value={formData.title}
+              value={formData.title || ''}
               onChange={e => setFormData({...formData, title: e.target.value})}
               className="w-full p-2 border rounded"
               placeholder="Ex: Campanha Dia dos Pais"
@@ -196,7 +192,7 @@ export function BannerForm({ initialData, onClose }: BannerFormProps) {
           <input 
             type="checkbox" 
             id="is_active"
-            checked={formData.is_active}
+            checked={formData.is_active ?? true}
             onChange={e => setFormData({...formData, is_active: e.target.checked})}
             className="h-4 w-4 text-[#1b3b6f]"
           />
