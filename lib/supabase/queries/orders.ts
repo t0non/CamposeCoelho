@@ -57,7 +57,7 @@ export async function getOrderById(orderId: string) {
       *,
       order_items(
         *,
-        product:products!order_items_product_id_fkey(id, sku, name, slug, images, unit)
+        product:products!order_items_product_id_fkey(id, sku, name, slug, unit)
       ),
       shipping_address:addresses!orders_shipping_address_id_fkey(*)
     `,
